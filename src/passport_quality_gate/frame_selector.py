@@ -3,6 +3,7 @@ from __future__ import annotations
 from collections import deque
 from copy import deepcopy
 from dataclasses import dataclass
+from math import isfinite
 from time import monotonic
 from typing import Any, Deque, Optional
 
@@ -26,6 +27,13 @@ class BestFrameConfig:
     recency_weight: float = 0.04
 
     def __post_init__(self) -> None:
+        if not all(isfinite(v) for v in (
+            self.window_ms, self.max_age_ms, self.max_frames,
+            self.max_memory_mb, self.min_bbox_iou, self.recency_weight,
+        )):
+            raise ValueError("BestFrameConfig values must be finite")
+        if isinstance(self.max_frames, bool) or int(self.max_frames) != self.max_frames:
+            raise ValueError("max_frames must be an integer")
         if self.window_ms <= 0 or self.max_age_ms <= 0:
             raise ValueError("window_ms and max_age_ms must be positive")
         if self.max_frames < 1:
@@ -171,6 +179,10 @@ class BestFrameSelector:
         if not isinstance(frame, np.ndarray) or frame.dtype != np.uint8 or frame.ndim != 3 or frame.shape[2] != 3:
             raise ValueError("frame must be uint8 HxWx3")
         t = monotonic() if timestamp is None else float(timestamp)
+        if not isfinite(t):
+            raise ValueError("timestamp must be finite")
+        if self._latest_timestamp is not None and t <= self._latest_timestamp:
+            raise ValueError("Push timestamps must strictly increase; clear on a new session")
         self._latest_result = deepcopy(result)
         self._latest_timestamp = t
 
@@ -190,6 +202,10 @@ class BestFrameSelector:
 
     def select_recent(self, trigger_timestamp: Optional[float] = None) -> Optional[SelectedFrame]:
         now = monotonic() if trigger_timestamp is None else float(trigger_timestamp)
+        if not isfinite(now):
+            raise ValueError("trigger_timestamp must be finite")
+        if self._latest_timestamp is not None and now < self._latest_timestamp:
+            raise ValueError("trigger_timestamp must not precede the latest push")
         self._prune(now)
         window_s = self.config.window_ms / 1000.0
         latest_bbox = self._bbox(self._latest_result)
