@@ -1,4 +1,3 @@
-cat > .gitattributes <<'EOF'
 * text=auto eol=lf
 
 *.pt -text
@@ -7,4 +6,3 @@ cat > .gitattributes <<'EOF'
 *.jpeg -text
 *.zip -text
 *.whl -text
-EOF
