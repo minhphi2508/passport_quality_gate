@@ -1,5 +1,20 @@
 # Changelog
 
+## v0.1.3
+### Added
+- Best-frame capture handoff now extracts the detected passport page for downstream OCR.
+- Full selected frame remains available as optional debug/reference output.
+
+### Fixed
+- Correct final ACCEPT/RETAKE capture aliases in the public SDK wrapper.
+- Final analysis no longer mutates live-preview temporal state.
+- BestFrameSelector rejects invalid and out-of-order timestamps.
+- Improved configuration Mapping compatibility.
+
+### Quality policy
+- No changes to FP2-GOLDEN-ACTUAL.
+- All 13 Golden core fingerprints remain unchanged.
+
 ## 0.1.2
 - Golden quality policy remains byte-identical: `FP2-GOLDEN-ACTUAL`.
 - Fix wheel dependency metadata: declare `ultralytics>=8.3,<9` so a fresh environment resolves the detector runtime.

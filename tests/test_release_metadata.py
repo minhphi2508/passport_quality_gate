@@ -13,8 +13,8 @@ class NoPassportLocalizer:
 def test_release_version_and_detector_dependency_are_declared():
     root = Path(__file__).resolve().parents[1]
     data = tomllib.loads((root / "pyproject.toml").read_text(encoding="utf-8"))
-    assert data["project"]["version"] == "0.1.2"
-    assert SDK_CANDIDATE_VERSION == "0.1.2"
+    assert data["project"]["version"] == "0.1.3"
+    assert SDK_CANDIDATE_VERSION == "0.1.3"
     deps = [str(x).lower() for x in data["project"]["dependencies"]]
     assert any(x.startswith("ultralytics>=8.3") for x in deps)
 

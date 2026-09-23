@@ -12,7 +12,7 @@ from .types import GuideBoxLike, coerce_guide_box
 
 
 QUALITY_POLICY = "FP2-GOLDEN-ACTUAL"
-SDK_CANDIDATE_VERSION = "0.1.2"
+SDK_CANDIDATE_VERSION = "0.1.3"
 
 
 def _project_root() -> Path:
