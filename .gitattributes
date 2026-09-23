@@ -1,0 +1,10 @@
+cat > .gitattributes <<'EOF'
+* text=auto eol=lf
+
+*.pt -text
+*.png -text
+*.jpg -text
+*.jpeg -text
+*.zip -text
+*.whl -text
+EOF
