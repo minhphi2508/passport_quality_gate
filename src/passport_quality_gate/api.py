@@ -62,6 +62,24 @@ def _resolve_device(device: Union[str, int]) -> Union[str, int]:
     return "cpu"
 
 
+def _normalize_final_result(result: Mapping[str, Any]) -> dict[str, Any]:
+    """Repair final output aliases without changing the frozen decision.
+
+    Raw Analyzer remains immutable. Only its final ACCEPT/RETAKE aliases need
+    normalization; preview readiness still belongs entirely to Golden.
+    """
+    out = dict(result)
+    if out.get("mode") == "final" and out.get("state") in {"ACCEPT", "RETAKE"}:
+        accepted = out["state"] == "ACCEPT"
+        out["capture_allowed"] = accepted
+        out["ready_for_capture"] = accepted
+        out["capture_quality_state"] = (
+            ("READY" if out.get("advisories") else "OPTIMAL")
+            if accepted else "NOT_READY"
+        )
+    return out
+
+
 def to_public_result(result: Mapping[str, Any]) -> dict[str, Any]:
     """Return the small JSON-ready contract intended for app/server consumers.
 
@@ -69,6 +87,7 @@ def to_public_result(result: Mapping[str, Any]) -> dict[str, Any]:
     from analyze_*(), but only this compact field set is treated as the stable
     external contract for SDK 0.1.x.
     """
+    result = _normalize_final_result(result)
     timing = result.get("timing_ms") or {}
     return {
         "capture_allowed": bool(result.get("capture_allowed")),
@@ -105,7 +124,9 @@ class PassportQualityGate:
     ) -> None:
         config_source: Union[str, Path, Mapping[str, Any]]
         config_source = _default_config_path() if config is None else config
-        self.config = load_config(config_source)
+        # The public signature accepts any Mapping; the frozen loader accepts
+        # dict specifically. Convert at this boundary, retaining its deep copy.
+        self.config = load_config(dict(config_source) if isinstance(config_source, Mapping) else config_source)
         self.device = _resolve_device(device)
         self.weights = Path(weights) if weights is not None else _default_weights_path()
 
@@ -117,6 +138,10 @@ class PassportQualityGate:
             )
         self.localizer = localizer
         self._analyzer = Analyzer(localizer, self.config)
+        # A missing-document final calls motion.reset() in the frozen engine.
+        # Isolate final orchestration so it cannot erase live-preview history.
+        # Both analyzers share the same localizer/model; no second model load.
+        self._final_analyzer = Analyzer(localizer, self.config)
 
     @property
     def metadata(self) -> dict[str, Any]:
@@ -138,6 +163,7 @@ class PassportQualityGate:
     def reset(self) -> None:
         """Reset temporal/motion state before a new live capture session."""
         self._analyzer.reset()
+        self._final_analyzer.reset()
 
     def analyze_preview(
         self,
@@ -163,13 +189,13 @@ class PassportQualityGate:
         timestamp: Optional[float] = None,
     ) -> dict[str, Any]:
         """Analyze one full camera frame using Golden FP2 final policy."""
-        return self._analyzer.analyze_frame(
+        return _normalize_final_result(self._final_analyzer.analyze_frame(
             frame,
             coerce_guide_box(guide_box),
             mode="final",
             timestamp=timestamp,
             capture_context="full_frame_final",
-        )
+        ))
 
     def analyze_document_crop(
         self,
@@ -178,13 +204,13 @@ class PassportQualityGate:
         timestamp: Optional[float] = None,
     ) -> dict[str, Any]:
         """Analyze an already-cropped passport data-page image."""
-        return self._analyzer.analyze_frame(
+        return _normalize_final_result(self._final_analyzer.analyze_frame(
             frame,
             guide_box=None,
             mode="final",
             timestamp=timestamp,
             capture_context="document_crop",
-        )
+        ))
 
     # Convenience methods for consumers that only want the documented stable
     # contract and do not need research diagnostics from the Golden engine.

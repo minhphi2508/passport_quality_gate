@@ -37,3 +37,6 @@ sdk_acceptance_v012/
 *FINALIZATION*.zip
 passport_quality_gate_sdk_v*.zip
 *.whl
+# Local research / manual test artifacts
+astra_last_pass/
+manual_best_frame/
