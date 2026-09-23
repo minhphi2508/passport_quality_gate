@@ -1,15 +1,59 @@
-# Best Recent Frame Selection
+# Best Recent Frame Selection — SDK 0.1.3
 
-Purpose: avoid using the exact shutter-time frame when finger movement introduces a small amount of motion blur.
+Purpose: avoid relying only on the exact shutter-time frame when finger/device motion makes that frame slightly worse than a recent eligible frame.
 
 Default behavior:
 
-- retain only frames already marked `capture_allowed=True` by Golden FP2;
-- keep a bounded in-memory buffer (default 12 frames / 96 MiB, whichever is hit first);
-- consider frames within the most recent 750 ms;
-- reject an old candidate when its detected document geometry differs strongly from the current document position;
-- rank using existing Golden metrics, with blur and OCR-critical resolution weighted most strongly;
-- use glare only as a small ranking signal because FP2 glare has known limitations;
-- add only a small recency preference so a clearly sharper older frame can beat the shutter-time frame.
+- retain only preview frames marked `capture_allowed=True` by Golden FP2
+- bounded in-memory buffer (default 12 frames / 96 MiB, whichever limit is reached first)
+- select within the most recent 750 ms window
+- reject geometrically inconsistent candidates when document position changes too much
+- rank using existing Golden quality diagnostics
+- emphasize blur and OCR-critical resolution more strongly than glare
+- apply only a small recency preference
+- write no image to disk
 
-All values are configuration defaults, not mobile/server requirements. No image is written to disk by the selector.
+## Integration requirement
+
+Push the **full** preview result:
+
+```python
+preview = gate.analyze_preview(frame, guide, timestamp=t)
+selector.push(frame, preview, timestamp=t)
+```
+
+Do not push the compact public result because the selector needs quality/localization diagnostics.
+
+## Timestamps
+
+Within one session:
+
+- timestamps must be finite
+- push timestamps must strictly increase
+- trigger timestamp must not be older than the latest push
+
+For a new session/document:
+
+```python
+selector.clear()
+```
+
+## Final handoff
+
+The selected frame is still a full camera frame.
+
+Required flow:
+
+```text
+select recent best full frame
+        ↓
+run final quality analysis on that exact frame
+        ↓
+ACCEPT
+        ↓
+extract passport page
+        ↓
+OCR crop
+```
+
+The selector itself does not crop or write images.

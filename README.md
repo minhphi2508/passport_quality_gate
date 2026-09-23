@@ -1,113 +1,93 @@
 # Passport Quality Gate
 
-**Pre-OCR passport capture quality assessment and real-time capture guidance.**
+**Pre-OCR passport capture quality assessment, capture guidance, recent-best-frame selection, and passport-page handoff.**
 
-![SDK](https://img.shields.io/badge/SDK-v0.1.2-blue)
+![SDK](https://img.shields.io/badge/SDK-v0.1.3-blue)
 ![Python](https://img.shields.io/badge/Python-3.11%20%7C%203.12-blue)
 ![Quality Policy](https://img.shields.io/badge/Policy-FP2--GOLDEN--ACTUAL-success)
-![Status](https://img.shields.io/badge/Status-Integration%20Candidate-orange)
+![Status](https://img.shields.io/badge/Status-Dev%20Handoff%20Candidate-orange)
 
-`passport_quality_gate` is a Python reference SDK for determining whether a passport camera frame is suitable for downstream OCR.
+`passport_quality_gate` is a Python reference SDK that evaluates whether a passport camera frame is suitable for downstream OCR/VLM processing.
 
-Instead of sending every captured image directly to OCR, the SDK analyzes the frame first and returns machine-readable capture decisions and guidance such as:
-
-```text
-READY
-MOVE_CLOSER
-MOVE_FARTHER
-MOVE_LEFT
-MOVE_RIGHT
-MOVE_UP
-MOVE_DOWN
-HOLD_STEADY
-RETAKE
-```
-
-The current SDK release is **v0.1.2**, built around the frozen quality policy:
+The current release is **v0.1.3**. Its quality behavior remains based on the frozen policy:
 
 ```text
 FP2-GOLDEN-ACTUAL
 ```
 
-> This project is an integration/reference candidate. It does not claim document authenticity verification, guaranteed OCR correctness, or production validation across all devices and passport types.
+v0.1.3 does **not** introduce a new quality policy. It keeps the 13-file Golden core unchanged and adds integration-layer correctness fixes plus a passport-page crop handoff for downstream OCR.
+
+> This is an integration/reference SDK candidate. It does not perform document authenticity verification, does not guarantee OCR correctness, and has not yet been production-validated across the full target device/passport population.
 
 ---
 
-## Why this exists
-
-Even a strong OCR or vision-language model can fail unnecessarily when the captured passport image has poor acquisition quality.
-
-Typical problems include:
-
-- passport too far from the camera
-- document partially outside the image
-- poor positioning
-- camera motion
-- blur
-- poor exposure
-- glare or reflections
-- weak text detail
-- MRZ localization problems
-
-This SDK sits **before OCR** and attempts to detect these conditions while the user can still correct them.
+## End-to-end role
 
 ```text
-Camera
-   │
-   ▼
-Passport Quality Gate
-   │
-   ├── NOT READY ──> guidance back to user
-   │
-   └── READY
-          │
-          ▼
-   Best recent frame
-          │
-          ▼
-       OCR / VLM
+Camera / app preview
+        │
+        ▼
+PassportQualityGate.analyze_preview(...)
+        │
+        ├── NOT READY → guidance_code → app UI
+        │
+        └── READY
+               │
+               ▼
+       BestFrameSelector
+               │
+               ▼
+      selected full frame
+               │
+               ▼
+PassportQualityGate.analyze_final(...)
+               │
+        ├── RETAKE → app UI
+        │
+        └── ACCEPT
+               │
+               ▼
+     extract_passport_page(...)
+               │
+               ▼
+ perspective-corrected passport crop
+               │
+               ▼
+        downstream OCR / VLM
 ```
+
+The final quality check is run on the **exact selected full-frame pixels**. Only after `ACCEPT` is the passport page extracted for OCR handoff.
 
 ---
 
-## Architecture
+## What the SDK owns
 
-```mermaid
-flowchart LR
-    A[Camera / Application] --> B[Passport Quality Gate]
+- YOLO-based passport page and MRZ localization
+- geometry / positioning / crop-risk evidence
+- exposure, blur, readability, glare, noise and motion evidence
+- live-preview decision and guidance codes
+- final ACCEPT / RETAKE analysis
+- bounded RAM-only recent-best-frame selection
+- perspective-corrected passport-page extraction for OCR handoff
+- CPU/CUDA device selection for the Python reference runtime
+- packaged detector weights and default configuration
 
-    B --> C[Passport + MRZ Localization]
-    C --> D[Geometry]
-    C --> E[Exposure]
-    C --> F[Blur / Readability]
-    C --> G[Glare]
-    C --> H[Motion]
+## What the SDK does not own
 
-    D --> I[Decision Engine]
-    E --> I
-    F --> I
-    G --> I
-    H --> I
+The consuming application/team remains responsible for:
 
-    I --> J[Capture Allowed]
-    I --> K[Guidance Code]
-    I --> L[Diagnostics]
-
-    J --> M[Best Frame Selector]
-    M --> N[Downstream OCR / VLM]
-```
-
-The SDK does **not** own:
-
-- camera acquisition
-- mobile UI
-- localized UI strings
-- shutter control
-- networking
-- permanent image storage
-- OCR
-
-Those remain responsibilities of the consuming application.
+- camera lifecycle and camera API
+- preview resolution/FPS selection
+- mobile UI/UX and guide rendering
+- localization of guidance strings
+- shutter/button behavior
+- session lifecycle and concurrency
+- app storage, retention, encryption and privacy policy
+- networking/backend transport
+- invoking the downstream OCR/VLM
+- retry/product fallback behavior when final analysis or crop extraction fails
+- target-device performance profiling and mobile/runtime optimization
+- production telemetry, rollout and monitoring
 
 ---
 
@@ -117,31 +97,23 @@ Those remain responsibilities of the consuming application.
 |---|---|
 | Passport localization | YOLO-based passport page and MRZ localization |
 | Geometry analysis | Position, scale, frame containment, crop risk and orientation evidence |
-| Exposure analysis | Detects excessively dark or bright capture conditions |
-| Blur metrics | Passport and MRZ sharpness analysis |
-| Readability evidence | Estimates preservation of text detail |
-| Glare analysis | Local highlight and texture-based reflection analysis |
-| Motion analysis | Uses temporal information during live preview |
-| Decision engine | Separates capture blockers from advisory guidance |
+| Exposure analysis | Excessively dark/bright capture conditions |
+| Blur/readability | Passport and MRZ detail-preservation evidence |
+| Glare analysis | Local highlight/reflection evidence |
+| Motion analysis | Stateful preview motion evidence |
+| Decision engine | Separates blockers from advisory guidance |
 | Temporal preview | Stabilizes live capture decisions across frames |
-| Best-frame selection | Maintains a recent in-memory candidate buffer for shutter-time selection |
+| Best-frame selection | Keeps recent eligible frames in a bounded RAM buffer |
+| Final quality check | Re-checks the exact frame selected for capture |
+| Passport-page extraction | Perspective-corrected crop from the accepted selected frame |
 | CPU / CUDA selection | `device="auto"` selects CUDA when available, otherwise CPU |
-| Packaged assets | Detector weights and default configuration are included in the SDK package |
+| Packaged assets | Detector weights and default configuration ship with the SDK |
 
 ---
 
-## Quick start
+## Installation
 
-### Clone
-
-```bash
-git clone https://github.com/minhphi2508/passport_quality_gate.git
-cd passport_quality_gate
-```
-
-### Create an environment
-
-Windows / Git Bash:
+### Source/development install
 
 ```bash
 py -3.12 -m venv .venv
@@ -151,15 +123,15 @@ python -m pip install --upgrade pip
 pip install -e ".[dev]"
 ```
 
-For a GPU deployment, install the appropriate PyTorch/CUDA build for the target machine before installing the SDK.
+### Wheel install
+
+The release builder produces an installable wheel in `dist/`.
+
+For GPU deployment, install the PyTorch build appropriate for the target CUDA environment before installing the SDK wheel.
 
 ---
 
-## Verify the repository
-
-The approved quality-policy core is protected by SHA-256 fingerprints.
-
-Run:
+## Verify the frozen quality core
 
 ```bash
 python tools/verify_golden_core.py
@@ -171,50 +143,56 @@ Expected:
 Golden core OK: 13 files match FP2-GOLDEN-ACTUAL
 ```
 
-Then run:
+Then:
 
 ```bash
 python -m pytest -q
 ```
 
+Do not regenerate Golden hashes simply to hide a mismatch.
+
 ---
 
-## Basic API
+## Basic preview API
 
 ```python
 from passport_quality_gate.api import PassportQualityGate
 
 gate = PassportQualityGate(device="auto")
+guide = (0.16, 0.18, 0.68, 0.64)
 
-guide_box = (0.16, 0.18, 0.68, 0.64)
-
-result = gate.analyze_preview_public(
-    frame,
-    guide_box=guide_box,
+result = gate.analyze_preview(
+    frame_bgr,
+    guide_box=guide,
+    timestamp=t,
 )
-
-print(result)
 ```
 
-`guide_box` uses normalized:
+Input frame contract:
+
+```text
+numpy.uint8, BGR, H x W x 3
+```
+
+The guide uses normalized:
 
 ```text
 (x, y, width, height)
 ```
 
-coordinates in the range `0–1`.
-
-Example:
-
-```python
-(0.16, 0.18, 0.68, 0.64)
-```
+coordinates.
 
 ---
 
-## Public result
+## Public result contract
 
-The compact public API intentionally exposes a small integration contract:
+For app/server integration that only needs the stable decision contract:
+
+```python
+public = gate.analyze_preview_public(frame_bgr, guide_box=guide)
+```
+
+Stable SDK 0.1.x fields:
 
 ```python
 {
@@ -231,107 +209,98 @@ The compact public API intentionally exposes a small integration contract:
 }
 ```
 
-Applications should primarily integrate against these fields rather than the full research-diagnostics dictionary.
+When using `BestFrameSelector` or `extract_passport_page`, keep the **full analysis result** because those utilities need diagnostics/localization that the compact public result intentionally omits.
 
-See:
-
-[`docs/API_CONTRACT.md`](docs/API_CONTRACT.md)
+See [`docs/API_CONTRACT.md`](docs/API_CONTRACT.md).
 
 ---
 
-## Preview analysis
-
-Live preview analysis is stateful:
+## Recommended capture flow
 
 ```python
-result = gate.analyze_preview_public(
-    frame,
-    guide_box=guide_box,
-)
+from passport_quality_gate.api import PassportQualityGate
+from passport_quality_gate.frame_selector import BestFrameSelector
+from passport_quality_gate.capture_output import extract_passport_page
+
+gate = PassportQualityGate(device="auto")
+selector = BestFrameSelector()
+
+# Preview loop
+preview = gate.analyze_preview(frame_bgr, guide, timestamp=t)
+selector.push(frame_bgr, preview, timestamp=t)
+
+# Shutter / capture action
+selected = selector.select_recent(trigger_timestamp=t_click)
+chosen = selected.frame if selected is not None else current_frame_bgr
+
+final = gate.analyze_final(chosen, guide, timestamp=t_click)
+
+if final["capture_allowed"]:
+    passport_crop = extract_passport_page(chosen, final)
+    # Pass passport_crop directly to downstream OCR/VLM.
+else:
+    # Ask the user to retake according to final guidance.
+    ...
 ```
 
-One `PassportQualityGate` instance should correspond to one capture stream/session.
-
-When starting a new document or capture session:
-
-```python
-gate.reset()
-```
-
----
-
-## Final-frame analysis
-
-For a full camera frame:
-
-```python
-result = gate.analyze_final_public(
-    frame,
-    guide_box=guide_box,
-)
-```
-
-Final mode does not use preview temporal smoothing as the authoritative capture decision.
-
----
-
-## Already-cropped passport images
-
-If the input has already been cropped to the passport data page:
-
-```python
-result = gate.analyze_document_crop_public(
-    cropped_page,
-)
-```
-
-A UI guide box is not required in this mode.
+Do not silently replace a crop failure with the full camera frame unless the product team explicitly chooses and validates that fallback.
 
 ---
 
 ## Best recent frame selection
 
-The exact frame captured when the user presses the shutter can be degraded by finger or device motion.
+`BestFrameSelector` is optional but recommended for shutter-time robustness.
 
-The SDK therefore provides an optional rolling best-frame selector.
+Default behavior:
+
+- retains only preview frames marked `capture_allowed=True`
+- RAM-only and bounded
+- default recent window approximately `750 ms`
+- checks geometry consistency against the latest frame
+- ranks using existing Golden quality metrics
+- gives only a small recency preference
+- writes nothing to disk
+
+Timestamps must be finite and strictly increasing within a session. Clear the selector when starting a new session/document.
+
+See [`docs/BEST_FRAME_SELECTION.md`](docs/BEST_FRAME_SELECTION.md).
+
+---
+
+## Passport-page extraction
+
+After the selected full frame passes final analysis:
 
 ```python
-from passport_quality_gate.frame_selector import BestFrameSelector
+from passport_quality_gate.capture_output import extract_passport_page
 
-selector = BestFrameSelector()
-
-selector.push(
-    frame,
-    result,
-    timestamp=t,
-)
-
-best = selector.select_recent(
-    trigger_timestamp=click_t,
-)
+passport_crop = extract_passport_page(selected_full_frame, final_result)
 ```
 
-The selector:
+The helper uses the final passport polygon and, when available, MRZ localization to orient the passport page. The returned value is an in-memory BGR `numpy.ndarray`.
 
-- keeps frames only in RAM
-- uses a bounded rolling buffer
-- considers recent capture-quality evidence
-- avoids selecting arbitrarily old frames
-- does not write images to disk
+The production handoff to OCR should use this in-memory crop. Writing JPEG files is only a demo/debug behavior in the example scripts.
 
-The default recent-frame window is approximately `750 ms` and is configurable.
+---
 
-See:
+## Session lifecycle
 
-[`docs/BEST_FRAME_SELECTION.md`](docs/BEST_FRAME_SELECTION.md)
+Live preview is stateful.
+
+Use one `PassportQualityGate` instance per live capture stream/session. For a new document/session or after a meaningful pause/resume boundary:
+
+```python
+gate.reset()
+selector.clear()
+```
+
+Do not share one stateful gate instance across unrelated concurrent users.
 
 ---
 
 ## Runtime information
 
 ```python
-gate = PassportQualityGate(device="auto")
-
 print(gate.runtime_info())
 ```
 
@@ -339,7 +308,7 @@ Example:
 
 ```python
 {
-    "sdk_candidate_version": "0.1.2",
+    "sdk_candidate_version": "0.1.3",
     "quality_policy": "FP2-GOLDEN-ACTUAL",
     "device": "cpu",
     "production_validated": False
@@ -350,27 +319,31 @@ Example:
 
 ## Examples
 
-Analyze an image:
+Analyze one image:
 
 ```bash
 python examples/analyze_image.py image.jpg --device auto
 ```
 
-Check runtime configuration:
+Runtime check:
 
 ```bash
 python examples/runtime_check.py
 ```
 
-Run the reference webcam integration:
+Reference webcam integration:
 
 ```bash
 python examples/webcam_demo.py --source 1 --device auto
 ```
 
-The webcam example is only an integration harness.
+Best-frame/crop validation harness:
 
-Camera resolution, device backend and UI behavior are **not SDK requirements**.
+```bash
+python examples/best_frame_compare.py --source 1 --device auto
+```
+
+The webcam scripts are integration examples, not production camera implementations.
 
 ---
 
@@ -378,28 +351,24 @@ Camera resolution, device backend and UI behavior are **not SDK requirements**.
 
 ```text
 passport_quality_gate/
-│
-├── src/
-│   └── passport_quality_gate/
-│       ├── api.py
-│       ├── analyzer.py
-│       ├── localization.py
-│       ├── geometry.py
-│       ├── quality.py
-│       ├── readability.py
-│       ├── motion.py
-│       ├── decision.py
-│       ├── frame_selector.py
-│       └── assets/
-│
+├── src/passport_quality_gate/
+│   ├── api.py
+│   ├── analyzer.py
+│   ├── localization.py
+│   ├── geometry.py
+│   ├── quality.py
+│   ├── readability.py
+│   ├── motion.py
+│   ├── decision.py
+│   ├── frame_selector.py
+│   ├── capture_output.py
+│   └── assets/
 ├── configs/
 ├── models/
 ├── examples/
 ├── tests/
 ├── tools/
 ├── docs/
-├── scripts/
-│
 ├── GOLDEN_CORE_SHA256.json
 ├── pyproject.toml
 ├── VERSION
@@ -410,100 +379,56 @@ passport_quality_gate/
 
 ## Frozen Golden policy
 
-The quality behavior currently used as the project baseline is:
+The current approved quality baseline is:
 
 ```text
 FP2-GOLDEN-ACTUAL
 ```
 
-The corresponding algorithm/runtime core is fingerprinted in:
+Its core is fingerprinted by:
 
 ```text
 GOLDEN_CORE_SHA256.json
 ```
 
-The goal is to allow packaging, SDK APIs, examples and integration infrastructure to evolve without silently modifying the approved quality behavior.
+SDK/API/examples/integration infrastructure may evolve without changing these fingerprints.
 
-Do **not** regenerate Golden hashes simply to make a failed verification disappear.
-
-A hash mismatch should first be treated as an unexpected core modification.
-
----
-
-## Development workflow
-
-Stable baseline:
-
-```text
-main
-└── v0.1.2
-    └── FP2-GOLDEN-ACTUAL
-```
-
-For new development:
-
-```bash
-git checkout -b develop/v0.1.3
-```
-
-Recommended workflow:
-
-```text
-git clone
-    ↓
-create .venv
-    ↓
-pip install -e ".[dev]"
-    ↓
-verify Golden core
-    ↓
-run tests
-    ↓
-create development branch
-    ↓
-develop / test
-    ↓
-pull request
-    ↓
-main
-```
+v0.1.3 keeps the Golden quality policy unchanged while adding integration-layer fixes and OCR handoff infrastructure.
 
 ---
 
 ## Known limitations
 
-The current Golden policy intentionally preserves several known limitations instead of continuing uncontrolled threshold tuning.
+Current known limitations include:
 
-Current limitations include:
+- partial document truncation can occasionally pass readiness checks
+- corner/completeness evidence can be imperfect under some backgrounds/viewing conditions
+- small OCR-critical glare, including MRZ glare, can occasionally be under-detected
+- strong motion can cause preview instability
+- quality thresholds are not yet calibrated against a large real-world passport/OCR-success dataset
+- detector/corner reliability may degrade with extreme blur, rotation, cropping or perspective
+- target mobile-device latency/thermal behavior has not yet been broadly characterized
+- the SDK does not establish document authenticity or guarantee downstream OCR correctness
 
-- document completeness/corner evidence is imperfect in some capture conditions
-- strong glare, particularly around OCR-critical areas, remains challenging
-- severe camera movement may cause preview instability
-- several quality thresholds have not yet been calibrated directly against downstream OCR success
-- detector/corner reliability can degrade with extreme blur, rotation, cropping or perspective
-- behavior and performance have not yet been validated across the full range of target mobile devices
+These are documented limitations, not hidden assumptions.
 
-See:
-
-[`docs/KNOWN_LIMITATIONS.md`](docs/KNOWN_LIMITATIONS.md)
+See [`docs/KNOWN_LIMITATIONS.md`](docs/KNOWN_LIMITATIONS.md).
 
 ---
 
 ## Documentation
 
-Detailed technical documentation is available under [`docs/`](docs/):
-
 | Document | Purpose |
 |---|---|
-| [API Contract](docs/API_CONTRACT.md) | Stable SDK integration interface |
-| [Integration Guide](docs/INTEGRATION_GUIDE.md) | How applications should integrate the SDK |
-| [Installation](docs/INSTALLATION.md) | Environment and installation guidance |
-| [Deployment](docs/DEPLOYMENT.md) | CPU/GPU and deployment considerations |
-| [Best Frame Selection](docs/BEST_FRAME_SELECTION.md) | Rolling-buffer frame selection |
-| [Output and Storage](docs/OUTPUT_AND_STORAGE.md) | Output and persistence behavior |
+| [API Contract](docs/API_CONTRACT.md) | Stable SDK integration contract |
+| [Integration Guide](docs/INTEGRATION_GUIDE.md) | End-to-end app integration |
+| [Best Frame Selection](docs/BEST_FRAME_SELECTION.md) | Rolling-buffer selection behavior |
+| [Output and Storage](docs/OUTPUT_AND_STORAGE.md) | In-memory output and persistence boundaries |
 | [Known Limitations](docs/KNOWN_LIMITATIONS.md) | Current technical limitations |
-| [Developer Handoff](docs/DEVELOPER_HANDOFF.md) | Integration responsibilities and boundaries |
-| [Release Validation](docs/RELEASE_VALIDATION.md) | Release verification notes |
+| [Developer Handoff](docs/DEVELOPER_HANDOFF.md) | Team responsibilities and minimal integration |
+| [Team Dev Checklist](docs/TEAM_DEV_CHECKLIST.md) | Work intentionally left to the consuming team |
+| [Manager Review](docs/MANAGER_REVIEW_v0.1.3.md) | What changed, evidence, and review scope |
+| [Release Validation](docs/RELEASE_VALIDATION.md) | Release verification status/checklist |
 
 ---
 
@@ -511,14 +436,14 @@ Detailed technical documentation is available under [`docs/`](docs/):
 
 | Item | Current state |
 |---|---|
-| SDK | `v0.1.2` |
+| SDK | `v0.1.3` |
 | Quality policy | `FP2-GOLDEN-ACTUAL` |
-| Golden core | Frozen and hash-verified |
-| Wheel installation | Fresh-environment tested |
-| Packaged model/config | Verified |
-| Preview API | Verified |
-| Final API | Verified |
-| Best-frame utility | Verified |
-| Current phase | Application integration / real-device evaluation |
+| Golden core | Frozen; 13-file hash manifest |
+| Integration fixes | Included |
+| Best-frame selector | Included |
+| Passport-page OCR handoff | Included |
+| Production mobile integration | Dev-team responsibility |
+| Downstream OCR integration | Next integration phase |
+| Production validation | Not yet claimed |
 
-The next development phase focuses on application integration and real capture evaluation rather than changing the frozen FP2 quality policy.
+The next phase should focus on application integration, OCR-linked evaluation, and target-device validation rather than further uncontrolled quality-threshold tuning.

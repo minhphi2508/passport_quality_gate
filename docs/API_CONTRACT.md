@@ -1,23 +1,50 @@
-# API Contract — SDK 0.1.2
+# API Contract — SDK 0.1.3
 
 ## Input
-Current Python reference input is `numpy.uint8` BGR, shape `H x W x 3`. The engine does not require 1280x720. A UI guide is supplied in normalized `(x, y, w, h)` coordinates.
 
-## Main object
-```python
-PassportQualityGate(device="auto", weights=None, config=None)
+Current Python reference input:
+
+```text
+numpy.uint8
+BGR
+H x W x 3
 ```
 
-- `analyze_preview(frame, guide_box, timestamp=None)` — full Golden FP2 preview dictionary (stable decisions + research diagnostics).
-- `analyze_final(frame, guide_box, timestamp=None)` — full-frame final policy. `guide_box` is required for full-frame analysis. Use `analyze_document_crop()` when the input is already a cropped passport page.
-- `analyze_document_crop(frame, timestamp=None)` — already-cropped data page.
-- `analyze_preview_public(...)`, `analyze_final_public(...)`, `analyze_document_crop_public(...)` — compact JSON-ready public contract.
-- `reset()` — clear temporal/motion history before a new document/session.
-- `metadata` / `runtime_info()` — small runtime/version/device metadata; both expose the same values.
+The engine does not require a fixed 1280×720 frame size.
 
-Use one instance per live stream/session. Do not share one stateful instance across unrelated concurrent users.
+A UI guide is supplied in normalized:
+
+```text
+(x, y, width, height)
+```
+
+coordinates.
+
+## Main object
+
+```python
+PassportQualityGate(
+    device="auto",
+    weights=None,
+    config=None,
+)
+```
+
+Main methods:
+
+- `analyze_preview(frame, guide_box, timestamp=None)` — full Golden preview result with integration diagnostics.
+- `analyze_final(frame, guide_box, timestamp=None)` — authoritative full-frame final result.
+- `analyze_document_crop(frame, timestamp=None)` — final analysis for an already-cropped passport data page.
+- `analyze_preview_public(...)`, `analyze_final_public(...)`, `analyze_document_crop_public(...)` — compact JSON-ready result.
+- `reset()` — reset both preview and final orchestration state for a new session/document.
+- `metadata` / `runtime_info()` — runtime/version/device metadata.
+
+Use one instance per live stream/session.
 
 ## Stable integration fields for SDK 0.1.x
+
+The compact public result exposes:
+
 - `capture_allowed`
 - `capture_quality_state`
 - `workflow_state`
@@ -27,10 +54,64 @@ Use one instance per live stream/session. Do not share one stateful instance acr
 - `advisories`
 - `timing_ms.total`
 
-The remaining engine diagnostics are intentionally not frozen as a long-term app/server contract.
+Other diagnostics are not guaranteed as a long-term app/server contract.
+
+## Final result normalization in v0.1.3
+
+The frozen Golden Analyzer internally uses final `ACCEPT` / `RETAKE` states. SDK v0.1.3 normalizes final integration aliases at the wrapper boundary so that:
+
+```text
+ACCEPT → capture_allowed=True
+RETAKE → capture_allowed=False
+```
+
+This does not change the underlying frozen quality decision, quality scores, blockers, advisories, thresholds, or detector weights.
+
+Final orchestration also uses separate analyzer state from live preview so a final call cannot unexpectedly reset preview temporal history.
+
+## Full result vs public result
+
+Use the compact public result for UI/server decision integration.
+
+Use the **full result** when calling:
+
+- `BestFrameSelector.push(...)`
+- `extract_passport_page(...)`
+
+because these utilities require localization and/or quality diagnostics omitted from the compact public contract.
 
 ## Best-frame selector
-`BestFrameSelector` accepts analyzed frames, retains only capture-allowed candidates in a bounded RAM buffer, and returns the highest-ranked recent candidate on shutter action. Window, frame count, memory budget, geometry consistency, and recency weight are configurable. It never writes frames to disk.
+
+```python
+selector.push(frame, full_preview_result, timestamp=t)
+best = selector.select_recent(trigger_timestamp=t_click)
+```
+
+Requirements:
+
+- timestamps must be finite
+- push timestamps must strictly increase within one session
+- `trigger_timestamp` must not precede the latest pushed timestamp
+- clear the selector for a new document/session
+
+The selector is RAM-only and bounded.
+
+## Passport-page extraction
+
+```python
+from passport_quality_gate.capture_output import extract_passport_page
+
+crop = extract_passport_page(selected_full_frame, full_final_result)
+```
+
+The function returns an in-memory perspective-corrected BGR `numpy.ndarray`.
+
+Call it only on the exact selected frame that passed final analysis.
+
+If extraction fails, the caller should explicitly handle that failure. The SDK does not silently substitute the full camera frame.
 
 ## Guidance strings
-The SDK returns codes, not user-facing Vietnamese/English text. UI localization belongs to the application layer.
+
+The SDK returns guidance **codes**, not user-facing localized text.
+
+UI copy and localization belong to the consuming application.
