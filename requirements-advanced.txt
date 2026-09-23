@@ -1,0 +1,4 @@
+# Optional research experiment only. External DocSHRNet code/checkpoint required.
+-r requirements.txt
+torch>=2.3
+torchvision>=0.18

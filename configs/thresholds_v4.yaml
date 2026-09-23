@@ -1,0 +1,352 @@
+# V4 context-aware provisional research thresholds; NOT OCR-calibrated.
+normalization:
+  preview_width: 480
+  final_width: 960
+  mrz_width: 800
+localization:
+  confidence: 0.25
+  imgsz: 640
+  min_quad_bbox_area: 0.72
+  min_mrz_inside: 0.95
+  corners:
+    max_width: 800
+    padding: 0.2
+    min_area_ratio: 0.72
+    max_area_ratio: 1.2
+    min_bbox_iou: 0.7
+    edge_tolerance: 2.5
+    min_side_support: 0.6
+    max_side_gap: 0.3
+    ambiguity_margin: 0.025
+    distinct_iou: 0.9
+    max_lines_per_side: 3
+    min_line_fraction: 0.22
+geometry:
+  # Legacy area thresholds retained for compatibility/debug only.
+  min_fill: 0.65
+  max_fill: 1.15
+  # V4 preview framing uses width/height independently, which is more actionable
+  # than a single area ratio.
+  preview_min_fill_w: 0.78
+  preview_min_fill_h: 0.72
+  preview_max_fill_w: 1.08
+  preview_max_fill_h: 1.10
+  preview_scale_transition: 0.25
+  offset_tolerance: 0.10
+  rotation_tolerance_deg: 7
+  perspective_tolerance: 0.18
+  border_margin: 0.008
+  # Prefer a directional recovery action when a page is close to one physical
+  # camera edge.  This is independent of the UI guide rectangle.
+  recovery_border_margin: 0.045
+  # Guide mismatch is allowed to be capture-worthy.  These are only used to
+  # label READY vs OPTIMAL and to surface a recommended adjustment.
+  guide_advisory_codes: [PASSPORT_TOO_FAR, PASSPORT_TOO_CLOSE, MOVE_LEFT, MOVE_RIGHT, MOVE_UP, MOVE_DOWN]
+completeness:
+  # V4.3 false-READY guard. These are deliberately broad TD3 geometry priors,
+  # not authenticity checks and not OCR calibration.  Guide mismatch remains
+  # advisory; this gate only asks whether the full data page is plausibly present.
+  enabled: true
+  page_aspect_good_min: 1.30
+  page_aspect_fail: 1.16
+  mrz_aspect_good_min: 7.0
+  mrz_aspect_fail: 5.3
+  mrz_width_ratio_good_min: 0.76
+  mrz_width_ratio_fail: 0.58
+  single_cue_grace: 0.45
+  verified_corners_discount: 0.55
+  # Weak-boundary asymmetry is only a corroborating signal when corners are
+  # unverified; uniformly weak borders are not auto-rejected.
+  boundary_side_drop_good: 0.28
+  boundary_side_drop_fail: 0.62
+  boundary_corner_drop_good: 0.30
+  boundary_corner_drop_fail: 0.62
+  boundary_median_support_min: 0.30
+  boundary_gap_good: 0.28
+  boundary_gap_fail: 0.68
+
+exposure:
+  dark_clip: 12
+  bright_clip: 250
+  dark_median_ok: 85
+  dark_median_fail: 30
+  bright_ratio_ok: 0.2
+  bright_ratio_fail: 0.75
+blur:
+  calibrated: false
+  preview_laplacian_reference: null
+  final_laplacian_reference: null
+  preview_mrz_laplacian_reference: null
+  final_mrz_laplacian_reference: null
+  reference_low_fraction: 0.15
+  patch_size: 48
+  fft_cutoff: 0.25
+  enable_fft_final: true
+glare:
+  value_min: 245
+  luminance_min: 225
+  saturation_max_white: 55
+  channel_clip: 250
+  chroma_min_colored: 20
+  texture_std_max: 15
+  local_contrast_min: 8
+  context_window_fraction: 0.2
+  min_component_ratio: 0.0003
+  max_local_area_ratio: 0.55
+  area_fail: 0.15
+  mrz_overlap_fail: 0.2
+  critical_overlap_fail: 0.2
+  enable_preview: true
+  # V4.3-FP2: the legacy mask is a broad highlight candidate detector.
+  # Only OCR-destructive highlight evidence is allowed to drive GLARE blocking.
+  impact_confirmation:
+    enabled: true
+    mrz_overlap_soft: 0.08
+    mrz_overlap_hard: 0.35
+    clip_soft: 0.25
+    clip_hard: 0.75
+    critical_overlap_soft: 0.20
+    critical_overlap_hard: 0.60
+    area_soft: 0.20
+    area_hard: 0.45
+    extreme_critical_soft: 0.45
+    extreme_critical_hard: 0.75
+    extreme_clip_soft: 0.55
+    extreme_clip_hard: 0.85
+    # One connected glare-like component crossing the MRZ is stricter than the
+    # broad aggregate mask, preventing real MRZ reflections from slipping
+    # through without reviving FP3's global false-block behaviour.
+    mrz_component:
+      enabled: true
+      overlap_soft: 0.012
+      overlap_hard: 0.045
+      span_w_soft: 0.05
+      span_w_hard: 0.16
+      span_h_soft: 0.20
+      span_h_hard: 0.55
+      delta_soft: 9.0
+      delta_hard: 24.0
+      clip_soft: 0.15
+      clip_hard: 0.55
+      reliability_floor: 0.72
+decision:
+  enter: 0.60
+  exit: 0.40
+  advisory_fraction: 0.65
+  thresholds:
+    CROPPED: {enter: 0.50, exit: 0.25}
+    DOCUMENT_INCOMPLETE: {enter: 0.55, exit: 0.35}
+    PASSPORT_TOO_FAR: {enter: 0.55, exit: 0.35}
+    PASSPORT_TOO_CLOSE: {enter: 0.55, exit: 0.35}
+    MOVE_LEFT: {enter: 0.55, exit: 0.35}
+    MOVE_RIGHT: {enter: 0.55, exit: 0.35}
+    MOVE_UP: {enter: 0.55, exit: 0.35}
+    MOVE_DOWN: {enter: 0.55, exit: 0.35}
+    ROTATED: {enter: 0.60, exit: 0.35}
+    PERSPECTIVE_TOO_HIGH: {enter: 0.60, exit: 0.35}
+    TOO_DARK: {enter: 0.60, exit: 0.40}
+    TOO_BRIGHT: {enter: 0.60, exit: 0.40}
+    LOW_RESOLUTION: {enter: 0.60, exit: 0.48}
+    BLUR: {enter: 0.60, exit: 0.40}
+    GLARE: {enter: 0.60, exit: 0.40}
+    LOW_CONTRAST: {enter: 0.60, exit: 0.40}
+    NOISE: {enter: 0.70, exit: 0.50}
+    MRZ_NOT_FOUND: {enter: 0.60, exit: 0.40}
+    LOCALIZATION_UNCERTAIN: {enter: 0.60, exit: 0.40}
+    QUALITY_UNCERTAIN: {enter: 0.60, exit: 0.40}
+    HOLD_STEADY: {enter: 0.60, exit: 0.35}
+  priority:
+    - PASSPORT_NOT_FOUND
+    - CROPPED
+    - DOCUMENT_INCOMPLETE
+    - MOVE_LEFT
+    - MOVE_RIGHT
+    - MOVE_UP
+    - MOVE_DOWN
+    - PASSPORT_TOO_FAR
+    - PASSPORT_TOO_CLOSE
+    - ROTATED
+    - PERSPECTIVE_TOO_HIGH
+    - TOO_DARK
+    - TOO_BRIGHT
+    - LOW_RESOLUTION
+    - BLUR
+    - GLARE
+    - LOW_CONTRAST
+    - NOISE
+    - MRZ_NOT_FOUND
+    - LOCALIZATION_UNCERTAIN
+    - QUALITY_UNCERTAIN
+    - HOLD_STEADY
+  exit_by_issue:
+    LOW_RESOLUTION: 0.48
+policy:
+  live_preview:
+    min_page_confidence: 0.50
+    min_mrz_confidence: 0.40
+    require_mrz: true
+    require_text_evidence: true
+    fallback_safe_border_margin: 0.0
+    # V4.2: guide-box composition is guidance, not a capture veto.
+    # Actual insufficiency is blocked by CROPPED / LOW_RESOLUTION / quality
+    # evidence.  This lets an OCR-readable page be captured even when it is
+    # not perfectly filling or centered in the ideal UI guide.
+    blocking:
+      - PASSPORT_NOT_FOUND
+      - CROPPED
+      - DOCUMENT_INCOMPLETE
+      - ROTATED
+      - PERSPECTIVE_TOO_HIGH
+      - TOO_DARK
+      - TOO_BRIGHT
+      - LOW_RESOLUTION
+      - BLUR
+      - GLARE
+      - LOW_CONTRAST
+      - NOISE
+      - MRZ_NOT_FOUND
+      - LOCALIZATION_UNCERTAIN
+      - QUALITY_UNCERTAIN
+      - HOLD_STEADY
+    advisory_candidates:
+      - PASSPORT_TOO_FAR
+      - PASSPORT_TOO_CLOSE
+      - MOVE_LEFT
+      - MOVE_RIGHT
+      - MOVE_UP
+      - MOVE_DOWN
+      - GLARE
+      - BLUR
+      - LOW_CONTRAST
+      - NOISE
+  full_frame_final:
+    min_page_confidence: 0.55
+    min_mrz_confidence: 0.45
+    require_mrz: true
+    require_text_evidence: true
+    # If corners are unavailable and the fallback box is very near the physical
+    # image border, completeness cannot be proven; ask for all edges to be shown.
+    fallback_safe_border_margin: 0.03
+    blocking:
+      - PASSPORT_NOT_FOUND
+      - CROPPED
+      - DOCUMENT_INCOMPLETE
+      - ROTATED
+      - PERSPECTIVE_TOO_HIGH
+      - TOO_DARK
+      - TOO_BRIGHT
+      - LOW_RESOLUTION
+      - BLUR
+      - GLARE
+      - LOW_CONTRAST
+      - NOISE
+      - MRZ_NOT_FOUND
+      - LOCALIZATION_UNCERTAIN
+      - QUALITY_UNCERTAIN
+    advisory_candidates: [GLARE, BLUR, LOW_CONTRAST, NOISE]
+  document_crop:
+    min_page_confidence: 0.45
+    min_mrz_confidence: 0.40
+    require_mrz: true
+    require_text_evidence: true
+    fallback_safe_border_margin: 0.0
+    blocking:
+      - PASSPORT_NOT_FOUND
+      - DOCUMENT_INCOMPLETE
+      - ROTATED
+      - PERSPECTIVE_TOO_HIGH
+      - TOO_DARK
+      - TOO_BRIGHT
+      - LOW_RESOLUTION
+      - BLUR
+      - GLARE
+      - LOW_CONTRAST
+      - NOISE
+      - MRZ_NOT_FOUND
+      - LOCALIZATION_UNCERTAIN
+      - QUALITY_UNCERTAIN
+    advisory_candidates: [GLARE, BLUR, LOW_CONTRAST, NOISE]
+guidance:
+  map:
+    PASSPORT_NOT_FOUND: PLACE_PASSPORT_IN_FRAME
+    CROPPED: SHOW_ALL_EDGES
+    DOCUMENT_INCOMPLETE: SHOW_ALL_EDGES
+    PASSPORT_TOO_FAR: MOVE_CLOSER
+    PASSPORT_TOO_CLOSE: MOVE_FARTHER
+    MOVE_LEFT: MOVE_LEFT
+    MOVE_RIGHT: MOVE_RIGHT
+    MOVE_UP: MOVE_UP
+    MOVE_DOWN: MOVE_DOWN
+    ROTATED: ROTATE_PASSPORT
+    PERSPECTIVE_TOO_HIGH: HOLD_CAMERA_PARALLEL
+    TOO_DARK: INCREASE_LIGHT
+    TOO_BRIGHT: REDUCE_DIRECT_LIGHT
+    LOW_RESOLUTION: MOVE_CLOSER
+    BLUR: HOLD_STEADY_OR_FOCUS
+    GLARE: AVOID_REFLECTION
+    LOW_CONTRAST: IMPROVE_LIGHTING
+    NOISE: IMPROVE_LIGHTING_AND_HOLD_STEADY
+    MRZ_NOT_FOUND: SHOW_MRZ
+    LOCALIZATION_UNCERTAIN: SHOW_ALL_EDGES
+    QUALITY_UNCERTAIN: HOLD_STEADY_OR_IMPROVE_LIGHTING
+    HOLD_STEADY: HOLD_STEADY
+temporal:
+  ema_alpha: 0.55
+  persist_s: 0.6
+  ready_s: 0.8
+  reset_gap_s: 2.0
+  geometry_jump: 0.25
+  recovery_s: 0.8
+readability:
+  enabled: true
+  max_width: 640
+  pre_sigma: 0.6
+  probe_sigma: 1.2
+  ink_delta: 5.0
+  min_ink_density: 0.015
+  max_ink_density: 0.5
+  min_components: 2
+  min_informative_patches: 2
+  evidence_contrast_min: 10
+  body_grid: [3, 4]
+  mrz_grid: [2, 6]
+  retention_good: 0.48
+  retention_bad: 0.78
+  contrast_good: 65
+  contrast_bad: 18
+  noise_good: 3
+  noise_bad: 10
+  page_width_good: 560
+  page_width_bad: 260
+  mrz_pitch_good: 10
+  mrz_pitch_bad: 4
+  far_readability_guard:
+    enabled: true
+    # Only tightens READY when PASSPORT_TOO_FAR is already active.  A page with
+    # a lower (better) resolution severity remains capture-worthy with an
+    # advisory, preserving the far-but-readable product policy.
+    min_low_resolution_score: 0.50
+# Kept for old external configs; V4 policy.* is authoritative.
+readiness:
+  require_mrz: true
+  require_corners: false
+  min_page_confidence: 0.55
+  min_mrz_confidence: 0.45
+  require_text_evidence: true
+motion:
+  # Fractions of the camera frame.  Small detector/hand jitter inside the
+  # dead-zone is ignored before speed is computed.
+  center_deadzone: 0.010
+  scale_deadzone: 0.015
+  ema_alpha: 0.45
+  speed_good: 0.10
+  speed_bad: 0.40
+  # Motion below this is coupled to measured blur rather than blocking alone.
+  quality_coupling_floor: 0.20
+  blur_coupling_reference: 0.55
+  hard_block_start: 0.80
+  immediate_block_score: 0.92
+  # Once HOLD_STEADY is confirmed, require this much continuously calm time
+  # before returning to READY.  This is a hysteresis/latching policy, not extra
+  # motion sensitivity.
+  release_s: 1.20

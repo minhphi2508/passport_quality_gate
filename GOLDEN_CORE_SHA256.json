@@ -1,0 +1,18 @@
+{
+  "quality_policy": "FP2-GOLDEN-ACTUAL",
+  "files": {
+    "src/passport_quality_gate/__init__.py": "6681ef57ace2c3eb6e4d2945e8cf724a260344286274eea5e6ed1fa0318ee882",
+    "src/passport_quality_gate/analyzer.py": "46f0ec347a27b9592d334d7a15c08fac5aa589e4bcb184e625b6b863c4191b2c",
+    "src/passport_quality_gate/config.py": "165fa985d5b5ba7bc6fc32a793810a5f19516e41b83df737aa896688c01791e3",
+    "src/passport_quality_gate/corners.py": "c966596d9cdcd262dbed3c6f7173257fb1d3dcaf8a003fffc54ff0a2fa5e8fea",
+    "src/passport_quality_gate/decision.py": "997d2a5eeeb4dbcfc694bdaa9f3a839ad4a4668acb16bb292b3785aefebd4c58",
+    "src/passport_quality_gate/defaults.yaml": "eb50265bc20b111109c78870cb3f4185f08dda734c54ecb8cdf2931571a5e327",
+    "src/passport_quality_gate/geometry.py": "1a6059318fe7da79ab5882f3f6e2fe84e7d947026838d2d4e91251d05b73208a",
+    "src/passport_quality_gate/localization.py": "b1b9b54cad376c6f97df3008e27f1ff5d2c39818231a88a1efdd0ddc16c3f5d3",
+    "src/passport_quality_gate/motion.py": "4cf2a9bae6485d61e6c05e3988cf4628ff66d0aa1ce228b154c8b42125b0fe8e",
+    "src/passport_quality_gate/quality.py": "8a26e5fb7903c0a0d679ec519953050ab3aa0b3c03fa39174e3071ee7a00a7b5",
+    "src/passport_quality_gate/readability.py": "dd6c6f1ce457415946cf124649a1a3437eeac500cbcb35617306eecd43020a85",
+    "configs/thresholds_v4.yaml": "eb50265bc20b111109c78870cb3f4185f08dda734c54ecb8cdf2931571a5e327",
+    "models/passport_detector_ver3_best.pt": "3cea32078a3b88b18e0ff1175b0ac2152ad29c0f7dfb1eb7eacacacdbba70bb2"
+  }
+}

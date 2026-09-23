@@ -1,0 +1,39 @@
+# Python
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+*.pyo
+
+# Test/build
+.pytest_cache/
+build/
+dist/
+*.egg-info/
+
+# IDE / OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# Runtime/debug outputs
+outputs/
+logs/
+tmp/
+temp/
+*.log
+
+# Local research archive
+archive/
+
+# Acceptance environments
+sdk_acceptance_test/
+sdk_acceptance_v012/
+
+# Generated release artifacts
+*DEV_HANDOFF*.zip
+*ENGINEERING_UPDATE*.zip
+*FINALIZATION*.zip
+passport_quality_gate_sdk_v*.zip
+*.whl

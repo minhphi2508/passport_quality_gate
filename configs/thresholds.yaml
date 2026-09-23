@@ -1,0 +1,95 @@
+# PROVISIONAL research settings. NOT probabilities or validated production limits.
+# V2 enables provisional text-detail checks; OCR-calibrated scoring is separate.
+normalization:
+  preview_width: 480
+  final_width: 960
+  mrz_width: 800
+localization:
+  confidence: 0.25
+  imgsz: 640
+  min_quad_bbox_area: 0.72
+  min_mrz_inside: 0.95
+geometry:
+  min_fill: 0.65
+  max_fill: 1.15
+  offset_tolerance: 0.10
+  rotation_tolerance_deg: 7
+  perspective_tolerance: 0.18
+  border_margin: 0.008
+exposure:
+  dark_clip: 12
+  bright_clip: 250
+  dark_median_ok: 85
+  dark_median_fail: 30
+  bright_ratio_ok: 0.20
+  bright_ratio_fail: 0.75
+blur:
+  calibrated: false
+  # Fill these from OCR-oracle experiments, separately for each normalization scale.
+  preview_laplacian_reference: null
+  final_laplacian_reference: null
+  preview_mrz_laplacian_reference: null
+  final_mrz_laplacian_reference: null
+  reference_low_fraction: 0.15
+  patch_size: 48
+  fft_cutoff: 0.25
+  enable_fft_final: true
+glare:
+  value_min: 245
+  luminance_min: 225
+  saturation_max_white: 55
+  channel_clip: 250
+  chroma_min_colored: 20
+  texture_std_max: 15
+  local_contrast_min: 8
+  context_window_fraction: 0.20
+  min_component_ratio: 0.0003
+  max_local_area_ratio: 0.55
+  area_fail: 0.15
+  mrz_overlap_fail: 0.20
+  critical_overlap_fail: 0.20
+  enable_preview: true
+decision:
+  enter: 0.60
+  exit: 0.40
+  priority: [PASSPORT_NOT_FOUND, CROPPED, PASSPORT_TOO_FAR, PASSPORT_TOO_CLOSE, MOVE_LEFT, MOVE_RIGHT, MOVE_UP, MOVE_DOWN, ROTATED, PERSPECTIVE_TOO_HIGH, TOO_DARK, TOO_BRIGHT, LOW_RESOLUTION, BLUR, GLARE, LOW_CONTRAST, NOISE, MRZ_NOT_FOUND, LOCALIZATION_UNCERTAIN, QUALITY_UNCERTAIN, HOLD_STEADY]
+temporal:
+  ema_alpha: 0.55
+  persist_s: 0.60
+  ready_s: 0.80
+  reset_gap_s: 2.0
+  geometry_jump: 0.25
+
+# V2 provisional conservative evidence gate. All scores remain uncalibrated for real passports.
+readability:
+  enabled: true
+  max_width: 640
+  pre_sigma: 0.6
+  probe_sigma: 1.2
+  ink_delta: 5.0
+  min_ink_density: 0.015
+  max_ink_density: 0.50
+  min_components: 2
+  min_informative_patches: 2
+  evidence_contrast_min: 10
+  body_grid: [3, 4]
+  mrz_grid: [2, 6]
+  retention_good: 0.48
+  retention_bad: 0.78
+  contrast_good: 65
+  contrast_bad: 18
+  noise_good: 3
+  noise_bad: 10
+  page_width_good: 560
+  page_width_bad: 260
+  mrz_pitch_good: 10
+  mrz_pitch_bad: 4
+readiness:
+  require_mrz: true
+  require_corners: true
+  min_page_confidence: 0.55
+  min_mrz_confidence: 0.45
+  require_text_evidence: true
+motion:
+  speed_good: 0.08
+  speed_bad: 0.30
