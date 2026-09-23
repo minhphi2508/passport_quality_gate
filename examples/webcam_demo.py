@@ -2,6 +2,10 @@
 
 This is NOT the production camera layer. Resolution, backend and analysis rate
 are demo options only. No frames/logs are saved by default.
+
+When --save-dir is enabled and a final frame is accepted, the OCR handoff image
+is a perspective-corrected passport-page crop produced from the exact selected
+frame. The full selected frame is saved separately only as a debug artifact.
 """
 from __future__ import annotations
 
@@ -14,6 +18,7 @@ import cv2
 import numpy as np
 
 from passport_quality_gate.api import PassportQualityGate
+from passport_quality_gate.capture_output import extract_passport_page
 from passport_quality_gate.frame_selector import BestFrameConfig, BestFrameSelector
 
 MESSAGES = {
@@ -81,7 +86,11 @@ def main():
     p.add_argument('--device', default='auto')
     p.add_argument('--guide', type=parse_guide, default=(0.16,0.18,0.68,0.64))
     p.add_argument('--best-window-ms', type=float, default=750.0)
-    p.add_argument('--save-dir', type=Path, help='Opt-in: save only the selected capture + one JSON on C')
+    p.add_argument(
+        '--save-dir',
+        type=Path,
+        help='Opt-in: on C, save accepted passport crop + debug full frame + JSON',
+    )
     p.add_argument('--log-jsonl', type=Path, help='Opt-in compact analysis log')
     a = p.parse_args()
 
@@ -158,16 +167,54 @@ def main():
                 else:
                     chosen = selected.frame
                     selection_meta = {'source':'recent_best_ready', **selected.metadata()}
+
+                # Final check is authoritative and runs on the exact selected pixels.
                 final = gate.analyze_final(chosen, a.guide, timestamp=trigger)
-                final_text = f"FINAL {final.get('state')} | {final.get('guidance_code') or final.get('primary_issue')} | {selection_meta['source']}"
+                final_allowed = bool(final.get('capture_allowed')) or final.get('state') == 'ACCEPT'
+
+                passport_crop = None
+                crop_error = None
+                if final_allowed:
+                    try:
+                        passport_crop = extract_passport_page(chosen, final)
+                    except (ValueError, cv2.error) as exc:
+                        crop_error = f'{type(exc).__name__}: {exc}'
+
+                crop_status = 'crop-ready' if passport_crop is not None else ('crop-failed' if final_allowed else 'retake')
+                final_text = (
+                    f"FINAL {final.get('state')} | "
+                    f"{final.get('guidance_code') or final.get('primary_issue')} | "
+                    f"{selection_meta['source']} | {crop_status}"
+                )
                 print(final_text, flush=True)
+
                 if a.save_dir:
                     capture_index += 1
                     a.save_dir.mkdir(parents=True, exist_ok=True)
                     stem = strftime('%Y%m%d_%H%M%S') + f'_{capture_index:03}'
-                    cv2.imwrite(str(a.save_dir/(stem+'.jpg')), chosen)
-                    payload = {'selection':selection_meta, 'final':final}
-                    (a.save_dir/(stem+'.json')).write_text(json.dumps(payload, indent=2, allow_nan=False), encoding='utf-8')
+
+                    # OCR handoff image: accepted passport-page crop only.
+                    passport_name = None
+                    if passport_crop is not None:
+                        passport_name = stem + '_passport.jpg'
+                        cv2.imwrite(str(a.save_dir/passport_name), passport_crop)
+
+                    # Development/debug only; never the preferred OCR handoff image.
+                    debug_name = stem + '_full_debug.jpg'
+                    cv2.imwrite(str(a.save_dir/debug_name), chosen)
+
+                    payload = {
+                        'selection': selection_meta,
+                        'final': final,
+                        'ocr_handoff_image': passport_name,
+                        'debug_full_frame': debug_name,
+                        'crop_error': crop_error,
+                    }
+                    (a.save_dir/(stem+'.json')).write_text(
+                        json.dumps(payload, indent=2, allow_nan=False),
+                        encoding='utf-8',
+                    )
+
                 gate.reset(); selector.clear(); latest = None; last_analysis = -1e9
     finally:
         cap.release()

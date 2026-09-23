@@ -40,3 +40,5 @@ passport_quality_gate_sdk_v*.zip
 # Local research / manual test artifacts
 astra_last_pass/
 manual_best_frame/
+
+manual_best_frame_crop/

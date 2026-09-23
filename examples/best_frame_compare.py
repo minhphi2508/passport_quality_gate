@@ -1,11 +1,14 @@
 """Opt-in validation harness for recent-best-frame selection.
 
-Nothing is written unless the user presses C. On C, the harness saves exactly:
-- click_frame.jpg: frame visible at button press
-- selected_frame.jpg: recent READY frame chosen by the selector (or click fallback)
-- comparison.json: selection age/scores and final decisions
+Nothing is written unless the user presses C. On C, the harness saves:
+- click_frame.jpg: full frame visible at button press (debug/reference)
+- selected_frame.jpg: selected recent full frame (debug/reference)
+- click_passport_crop.jpg: passport crop from click frame when final ACCEPT
+- selected_passport_crop.jpg: passport crop from selected frame when final ACCEPT
+- comparison.json: selection metadata and final decisions
 
-This is a validation tool, not part of the production camera layer.
+The passport crops are the OCR-relevant outputs. Full frames are retained only
+for manual comparison/debugging in this validation harness.
 """
 from __future__ import annotations
 
@@ -18,6 +21,7 @@ import cv2
 import numpy as np
 
 from passport_quality_gate.api import PassportQualityGate, to_public_result
+from passport_quality_gate.capture_output import extract_passport_page
 from passport_quality_gate.frame_selector import BestFrameConfig, BestFrameSelector
 
 
@@ -30,6 +34,21 @@ def guide_poly(frame, box):
         [round((x+bw)*w), round((y+bh)*h)],
         [round(x*w), round((y+bh)*h)],
     ], np.int32)
+
+
+def _accepted(result: dict) -> bool:
+    # Works with the Astra integration fix while remaining safe on the frozen
+    # raw-state convention used by older SDK snapshots.
+    return bool(result.get('capture_allowed')) or result.get('state') == 'ACCEPT'
+
+
+def _try_crop(frame, result):
+    if not _accepted(result):
+        return None, None
+    try:
+        return extract_passport_page(frame, result), None
+    except (ValueError, cv2.error) as exc:
+        return None, f'{type(exc).__name__}: {exc}'
 
 
 def main():
@@ -87,29 +106,56 @@ def main():
                 trigger = monotonic()
                 click_frame = raw.copy()
                 selected = selector.select_recent(trigger)
+
                 gate.reset()
                 click_final = gate.analyze_final(click_frame, guide, timestamp=trigger)
+
                 if selected is None:
                     selected_frame = click_frame.copy()
                     selection = {"source":"click_frame_fallback", "selected_frame_age_ms":0.0}
                 else:
                     selected_frame = selected.frame
                     selection = {"source":"recent_best_ready", **selected.metadata()}
+
                 gate.reset()
                 selected_final = gate.analyze_final(selected_frame, guide, timestamp=trigger)
+
+                click_crop, click_crop_error = _try_crop(click_frame, click_final)
+                selected_crop, selected_crop_error = _try_crop(selected_frame, selected_final)
 
                 index += 1
                 out = a.output / (strftime('%Y%m%d_%H%M%S') + f'_{index:03}')
                 out.mkdir(parents=True, exist_ok=True)
+
+                # Full frames are debug/reference only.
                 cv2.imwrite(str(out/'click_frame.jpg'), click_frame)
                 cv2.imwrite(str(out/'selected_frame.jpg'), selected_frame)
+
+                click_crop_name = None
+                selected_crop_name = None
+                if click_crop is not None:
+                    click_crop_name = 'click_passport_crop.jpg'
+                    cv2.imwrite(str(out/click_crop_name), click_crop)
+                if selected_crop is not None:
+                    selected_crop_name = 'selected_passport_crop.jpg'
+                    cv2.imwrite(str(out/selected_crop_name), selected_crop)
+
                 payload = {
                     "selection": selection,
                     "click_final": to_public_result(click_final),
                     "selected_final": to_public_result(selected_final),
+                    "click_passport_crop": click_crop_name,
+                    "selected_passport_crop": selected_crop_name,
+                    "click_crop_error": click_crop_error,
+                    "selected_crop_error": selected_crop_error,
+                    "ocr_handoff_preferred": selected_crop_name,
                 }
-                (out/'comparison.json').write_text(json.dumps(payload, indent=2, allow_nan=False), encoding='utf-8')
+                (out/'comparison.json').write_text(
+                    json.dumps(payload, indent=2, allow_nan=False),
+                    encoding='utf-8',
+                )
                 print(json.dumps(payload, indent=2, allow_nan=False), flush=True)
+
                 gate.reset(); selector.clear(); latest = None; last_analysis = -1e9
     finally:
         cap.release()
