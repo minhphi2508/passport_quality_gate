@@ -25,7 +25,7 @@ def _ramp01(value, low, high):
     return max(0.0, min(1.0, (value-low)/(high-low)))
 
 
-def _confirmed_glare_score(glare_metrics, readability, cfg):
+def _confirmed_glare_score(glare_metrics, readability, cfg, *, localized=False):
     """Convert broad highlight candidates into OCR-impact glare evidence.
 
     The legacy glare mask intentionally over-detects bright/low-texture regions.
@@ -92,6 +92,9 @@ def _confirmed_glare_score(glare_metrics, readability, cfg):
         * _ramp01(clipped, icfg.get('extreme_clip_soft',0.55), icfg.get('extreme_clip_hard',0.85))
     )
     confirmed=max(mrz_risk, component_risk, body_risk, area_risk, extreme_risk)
+    if localized:
+        base=max(mrz_risk, body_risk, area_risk, extreme_risk)
+        return max(min(float(raw), float(base)), float(component_risk))
     return min(float(raw), float(confirmed))
 
 
@@ -104,9 +107,14 @@ class Analyzer:
         self.temporal = TemporalStabilizer(self.engine)
         self.motion = MotionAnalyzer(self.config['motion'])
         self.debug = {}
+        self.research = None
+        if self.config.get("research", {}).get("enabled", False):
+            from .research import ResearchSession
+            self.research = ResearchSession(self.config["research"])
 
     def reset(self):
         self.temporal.reset(); self.motion.reset(); self.debug = {}
+        if self.research is not None: self.research.reset()
 
     def _context(self, mode, capture_context):
         if capture_context is None:
@@ -216,10 +224,20 @@ class Analyzer:
         start=perf_counter(); times={}; self.debug={}
         guide=guide_polygon(guide_box,frame.shape)
         t=perf_counter(); det=detection if detection is not None else self.localizer.locate(frame,mode); times['localization']=(perf_counter()-t)*1000
+        research={}
+        if self.research is not None:
+            from .research import prepare_detection
+            t=perf_counter()
+            det,mrz_evidence=prepare_detection(frame,det,self.config['research'],self.config['policy'][context]['min_mrz_confidence'])
+            times['mrz_presence']=(perf_counter()-t)*1000
         g={}; q={}; raw={}; limitations=[]; evidence={}
         if det.found:
             det.polygon=order_quad(det.polygon)
             t=perf_counter(); g=analyze_geometry(det,guide,frame.shape,self.config['geometry']); times['geometry']=(perf_counter()-t)*1000
+            if self.research is not None:
+                t=perf_counter()
+                research=self.research.observe_geometry(frame,det,g,mrz_evidence)
+                times['side_completeness']=(perf_counter()-t)*1000
             t=perf_counter(); crop,valid,mrz,matrix=rectify(frame,det,self.config['normalization'][mode+'_width']); times['normalization']=(perf_counter()-t)*1000
             t=perf_counter(); e=exposure(crop,valid,self.config['exposure']); times['exposure']=(perf_counter()-t)*1000
             t=perf_counter(); b,heat=blur(crop,valid,mrz,self.config['blur'],self.config['normalization'],mode); times['blur']=(perf_counter()-t)*1000
@@ -233,7 +251,19 @@ class Analyzer:
             score=b['blur_score']
             if rd is not None and rd['blur_score'] is not None:
                 score=max(score,rd['blur_score']) if score is not None else rd['blur_score']
-            confirmed_glare=_confirmed_glare_score(gl,rd,self.config['glare'])
+            confirmed_glare=_confirmed_glare_score(gl,rd,self.config['glare'],localized=self.research is not None)
+            mrz_glare_score=0.
+            if self.research is not None:
+                t=perf_counter()
+                local_glare=self.research.mrz_glare(frame,det,self.config['glare'],now,mode)
+                # Reuse candidate components from the page path without any global-area cap.
+                component_only=dict(gl,glare_score=0.)
+                component_score=_confirmed_glare_score(component_only,rd,self.config['glare'],localized=True) or 0.
+                mrz_glare_score=max(component_score,local_glare['score'])
+                confirmed_glare=max(confirmed_glare or 0.,mrz_glare_score)
+                research['mrz_glare']=local_glare
+                research['mrz_glare']['page_component_score']=component_score
+                times['mrz_local_glare']=(perf_counter()-t)*1000
             gl['candidate_score']=gl.get('glare_score')
             gl['decision_glare_score']=confirmed_glare
             q={k:e[k] for k in ('too_dark_score','too_bright_score')}
@@ -243,10 +273,14 @@ class Analyzer:
                 noise_score=rd['noise_score'] if rd else None)
             m=self.motion.update(det,frame.shape,now) if mode=='preview' else None
             q['motion_score']=m['score'] if m else 0.
+            if self.research is not None:
+                q['mrz_glare_score']=mrz_glare_score
+                research['motion_score']=q['motion_score']
             raw=dict(exposure=e,blur=b,glare=gl,readability=rd,motion=m)
             policy=self.config['policy'][context]
             page_confident=det.confidence>=policy['min_page_confidence']
             mrz_present=det.mrz_polygon is not None and det.mrz_confidence>=policy['min_mrz_confidence']
+            if self.research is not None: mrz_present=mrz_evidence['credible']
             if page_confident and mrz_present and det.corners_reliable: grade='A'
             elif page_confident and mrz_present: grade='B'
             elif page_confident: grade='C'
@@ -257,6 +291,7 @@ class Analyzer:
                 glare_observed=gl['glare_score'] is not None,localization_grade=grade,
                 perspective_verified=bool(det.corners_reliable),corner_evidence=det.corner_evidence or {},
             )
+            if self.research is not None: evidence['mrz_state']=mrz_evidence['state']
             evidence['document_completeness_score']=self.engine.document_incomplete_score(g,evidence,context)
             evidence['document_completeness_ok']=not self.engine.active('DOCUMENT_INCOMPLETE',evidence['document_completeness_score'])
             if not self.config['blur']['calibrated']: limitations.append('QUALITY_THRESHOLDS_NOT_OCR_CALIBRATED')
@@ -267,6 +302,7 @@ class Analyzer:
             self.debug=dict(crop=crop,valid=valid,mrz=mrz,glare_mask=mask,blur_heatmap=heat,homography=matrix)
         else:
             self.motion.reset(); e={}
+            if self.research is not None: self.research.reset()
 
         t=perf_counter(); scores=self.engine.scores(det.found,g,q,evidence,context)
         blockers_policy=self.engine.blocking_codes(context)
@@ -307,6 +343,11 @@ class Analyzer:
         advisories=self._advisories(evidence,g,scores,context)
         advisory_guidance=self._advisory_guidance(advisories,g,context,scores)
         guidance=self._guidance(issue,g,context)
+        if self.research is not None:
+            guidance=self.research.guidance_for(guidance,active_blockers,scores,research,now,mode)
+            if guidance['code']=='SHOW_ALL_EDGES' and issue=='LOCALIZATION_UNCERTAIN':
+                guidance['code']='CENTER_AND_HOLD'
+            times['total']=(perf_counter()-start)*1000
         if guidance['severity'] is None and issue not in (None,'READY'):
             guidance['severity']=scores.get(issue)
         guide_codes=set(self.config['geometry'].get('guide_advisory_codes',[]))
@@ -325,6 +366,7 @@ class Analyzer:
             all_issues.append(dict(code=c,score=v,active=self.engine.active(c,v),blocking=c in blocking_set,
                                    enter_threshold=self.engine.enter_threshold(c)))
         return dict(
+            **({'research':research,'quality_policy':'VNEXT-RESEARCH'} if self.research is not None else {}),
             schema_version='0.4.3-fp2.1',mode=mode,capture_context=context,state=state,workflow_state=workflow,
             primary_issue=issue,passport_found=det.found,frame_size=dict(width=frame.shape[1],height=frame.shape[0]),timestamp_s=now,
             guidance_code=guidance['code'],guidance=guidance,requires_final_check=mode=='preview',confidence=det.confidence,
@@ -334,5 +376,6 @@ class Analyzer:
             capture_quality_state=capture_quality_state,guide_alignment_ideal=not bool(active_guide_advisories),
             advisories=advisories,advisory_guidance=advisory_guidance,recommended_adjustment=recommended_adjustment,
             quality_evidence=evidence,thresholds_status='provisional',production_validated=False,
-            acceptance_scope='v4_3_fp2_1_targeted_policy_not_authenticity_or_ocr_guarantee'
+            acceptance_scope=('vnext_research_pending_manual_validation' if self.research is not None else
+                              'v4_3_fp2_1_targeted_policy_not_authenticity_or_ocr_guarantee')
         )

@@ -65,8 +65,8 @@ def _resolve_device(device: Union[str, int]) -> Union[str, int]:
 def _normalize_final_result(result: Mapping[str, Any]) -> dict[str, Any]:
     """Repair final output aliases without changing the frozen decision.
 
-    Raw Analyzer remains immutable. Only its final ACCEPT/RETAKE aliases need
-    normalization; preview readiness still belongs entirely to Golden.
+    Normalize the shared ACCEPT/RETAKE aliases for both the default Golden
+    profile and the explicit opt-in research profile.
     """
     out = dict(result)
     if out.get("mode") == "final" and out.get("state") in {"ACCEPT", "RETAKE"}:
@@ -104,7 +104,7 @@ def to_public_result(result: Mapping[str, Any]) -> dict[str, Any]:
 
 
 class PassportQualityGate:
-    """Stable integration wrapper around the frozen FP2 Golden engine.
+    """Stable integration wrapper; FP2 by default, VNext only with explicit config.
 
     This class does not open a camera, render UI, save images, or create logs.
     One instance should be used per live preview stream because FP2 preview
@@ -147,7 +147,7 @@ class PassportQualityGate:
     def metadata(self) -> dict[str, Any]:
         return {
             "sdk_candidate_version": SDK_CANDIDATE_VERSION,
-            "quality_policy": QUALITY_POLICY,
+            "quality_policy": "VNEXT-RESEARCH" if self.config.get("research", {}).get("enabled", False) else QUALITY_POLICY,
             "device": self.device,
             "production_validated": False,
         }

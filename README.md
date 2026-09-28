@@ -1,5 +1,10 @@
 # Passport Quality Gate
 
+> **Research branch:** opt-in VNext implementation and camera test instructions are in
+> [VNext Research Handoff](docs/VNEXT_RESEARCH_HANDOFF.md). Default FP2 behavior remains available;
+> the original Golden manifest is intentionally unchanged and therefore flags the two
+> research-touched core files on this branch. SDK version/release tags are unchanged.
+
 **Pre-OCR passport capture quality assessment, capture guidance, recent-best-frame selection, and passport-page handoff.**
 
 ![SDK](https://img.shields.io/badge/SDK-v0.1.3-blue)

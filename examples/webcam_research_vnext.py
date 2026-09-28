@@ -3,6 +3,7 @@
 Metrics only unless --record-images is explicitly supplied. Preview inference
 is throttled independently of camera display. Final always uses selected pixels.
 """
+from concurrent.futures import ThreadPoolExecutor
 import argparse
 import json
 from pathlib import Path
@@ -10,6 +11,7 @@ from time import monotonic, perf_counter
 
 import cv2
 import numpy as np
+from passport_quality_gate.runtime_metrics import memory_mib
 
 from passport_quality_gate.api import PassportQualityGate
 from passport_quality_gate.capture_output import extract_passport_page
@@ -48,33 +50,49 @@ def main():
     last_analysis = -1e9
     debug = False
     timings = []
+    peak_rss_mib = 0.
     flips = guidance_flips = 0
     started = monotonic()
     capture_index = 0
+    worker = ThreadPoolExecutor(max_workers=1, thread_name_prefix='quality')
+    pending = None
+    analyzed_frame = None
+    analyzed_time = None
+
+    def record(result, observed_frame, stamp):
+        nonlocal latest, flips, guidance_flips, peak_rss_mib
+        previous = latest
+        latest = result
+        selector.push(observed_frame, latest, timestamp=stamp)
+        timings.append(latest['timing_ms']['total'])
+        peak_rss_mib = max(peak_rss_mib, (memory_mib() or 0.))
+        if previous:
+            flips += previous['capture_allowed'] != latest['capture_allowed']
+            guidance_flips += previous['guidance_code'] != latest['guidance_code']
+        latest['research_ready_exit'] = {
+            'exited': bool(previous and previous['capture_allowed'] and not latest['capture_allowed']),
+            'blocking_issues': latest['blocking_issues'],
+            'motion': latest['raw_metrics'].get('motion'),
+            'blur_score': latest['quality'].get('blur_score'),
+        }
+        if log:
+            log.write(json.dumps({'event': 'preview', **latest}, allow_nan=False)+'\n')
+            log.flush()
+
     try:
         while True:
             ok, frame = camera.read()
             if not ok:
                 break
             now = monotonic()
-            if now-last_analysis >= 1/args.analysis_fps:
+            if pending is not None and pending.done():
+                record(pending.result(), analyzed_frame, analyzed_time)
+                pending = None
+            if pending is None and now-last_analysis >= 1/args.analysis_fps:
                 last_analysis = now
-                previous = latest
-                latest = gate.analyze_preview(frame, guide, timestamp=now)
-                selector.push(frame, latest, timestamp=now)
-                timings.append(latest['timing_ms']['total'])
-                if previous:
-                    flips += previous['capture_allowed'] != latest['capture_allowed']
-                    guidance_flips += previous['guidance_code'] != latest['guidance_code']
-                latest['research_ready_exit'] = {
-                    'exited': bool(previous and previous['capture_allowed'] and not latest['capture_allowed']),
-                    'blocking_issues': latest['blocking_issues'],
-                    'motion': latest['raw_metrics'].get('motion'),
-                    'blur_score': latest['quality'].get('blur_score'),
-                }
-                if log:
-                    log.write(json.dumps({'event': 'preview', **latest}, allow_nan=False)+'\n')
-                    log.flush()
+                analyzed_frame = frame.copy()
+                analyzed_time = now
+                pending = worker.submit(gate.analyze_preview, analyzed_frame, guide, timestamp=now)
             display = frame.copy()
             if latest:
                 color = (40, 220, 40) if latest['capture_allowed'] else (0, 190, 255)
@@ -93,9 +111,14 @@ def main():
             if key == ord('d'):
                 debug = not debug
             if key == ord('r'):
+                if pending is not None:
+                    pending.result(); pending = None
                 gate.reset(); selector.clear(); latest = None; last_analysis = -1e9
             if key == ord('c'):
                 trigger = monotonic()
+                if pending is not None:
+                    record(pending.result(), analyzed_frame, analyzed_time)
+                    pending = None
                 selected = selector.select_recent(trigger_timestamp=trigger)
                 chosen = selected.frame if selected is not None else frame
                 final = gate.analyze_final(chosen, guide, timestamp=trigger)
@@ -118,8 +141,10 @@ def main():
                         cv2.imwrite(str(args.record_images / f'{capture_index:04d}_crop.jpg'), crop)
                 gate.reset(); selector.clear(); latest = None; last_analysis = -1e9
     finally:
+        worker.shutdown(wait=True)
         elapsed = monotonic()-started
         summary = {'event': 'summary', 'frames': len(timings), 'analysis_hz': len(timings)/max(elapsed, 1e-9),
+                   'process_peak_sampled_rss_mib': peak_rss_mib, 'decision_flips_per_min': 60*flips/max(elapsed,1e-9),
                    'decision_flips': int(flips), 'guidance_flips': int(guidance_flips),
                    'latency_ms_p50_p95_p99': np.percentile(timings, [50,95,99]).tolist() if timings else []}
         print(json.dumps(summary))

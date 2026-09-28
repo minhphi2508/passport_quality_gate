@@ -12,6 +12,10 @@ class DecisionEngine:
 
     def __init__(self, config):
         self.config = config
+        if config.get('research', {}).get('enabled', False):
+            priority=config['decision']['priority']
+            if 'MRZ_GLARE' not in priority:
+                priority.insert(priority.index('GLARE'), 'MRZ_GLARE')
 
     def enter_threshold(self, code):
         t = self.config['decision'].get('thresholds', {}).get(code, {})
@@ -31,7 +35,9 @@ class DecisionEngine:
         return float(value) >= threshold
 
     def blocking_codes(self, capture_context):
-        return list(self.config['policy'][capture_context]['blocking'])
+        codes=list(self.config['policy'][capture_context]['blocking'])
+        if self.config.get('research', {}).get('enabled', False): codes.append('MRZ_GLARE')
+        return codes
 
 
     def document_incomplete_score(self, g, evidence=None, capture_context='live_preview'):
@@ -45,6 +51,8 @@ class DecisionEngine:
         """
         if not g:
             return None
+        if self.config.get('research', {}).get('enabled', False) and 'side_completeness' in g:
+            return max(v['cut_score'] for v in g['side_completeness'].values())
         cfg=self.config.get('completeness', {})
         if not cfg.get('enabled', True):
             return 0.0
@@ -272,6 +280,15 @@ class DecisionEngine:
         # therefore keep useful measurements without confusing them with a gate.
         if capture_context == 'document_crop' and scores.get('CROPPED') is not None:
             scores['CROPPED'] = 0.
+        if self.config.get('research', {}).get('enabled', False):
+            scores['MRZ_GLARE']=q.get('mrz_glare_score')
+            # No 4-edge or positive-margin requirement in VNext final capture.
+            if evidence is not None:
+                mrz_state=evidence.get('mrz_state','WEAK')
+                scores['MRZ_NOT_FOUND']=float(mrz_state=='ABSENT')
+                scores['LOCALIZATION_UNCERTAIN']=float(not evidence.get('page_confident',False))
+                if not evidence.get('mrz_present',False):
+                    scores['QUALITY_UNCERTAIN']=1.
         return scores
 
     def primary(self, scores, threshold=None, allowed=None):
