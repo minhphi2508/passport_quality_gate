@@ -196,12 +196,21 @@ def side_completeness(g, boundaries, mrz, top_content, expected_outside, cfg):
         shape=(1-ramp(aspect,cfg['aspect_low_bad'],cfg['aspect_low_good'])) if side in ('left','right') else ramp(aspect,cfg['aspect_high_good'],cfg['aspect_high_bad'])
         # Low MRZ aspect is a layout cue, correlated with expected bounds: one group.
         mrz_shape=1-ramp(float(g.get('mrz_aspect_ratio') or 9.),5.3,7.) if side in ('left','right') and mrz.get('current_yolo_present',False) else 0.
-        layout=max(float(expected_outside.get(side,0.)), mrz_shape*proximity)
+        inferred=float(expected_outside.get(side,0.))
+        if cfg.get('capture_viewport'):
+            # Paper-margin extrapolation plus proximity alone is not content
+            # loss. In V4 require independent observed shape/boundary support.
+            inferred*=max(shape,asym)
+        layout=max(inferred, mrz_shape*proximity)
         cues=dict(frame_contact=contact, boundary_asymmetry=asym, layout=layout, page_shape=shape)
         score=two_cue(cues)
         if side=='top':
             substantial=ramp(float(expected_outside.get('top_fraction',0.)),.06,cfg['top_substantial'])
             score *= max(top_content, substantial, shape)
+        if cfg.get('capture_viewport'):
+            # An internal detector edge is not the capture boundary. Keep its
+            # weak support in diagnostics, but do not invent a directional cut.
+            score*=proximity
         result[side]=dict(cut_score=score, state='MISSING' if score>=cfg['side_block'] else
                           ('PRESENT' if strength>=.6 else 'UNCERTAIN'), cues=cues,
                           border_proximity=proximity, boundary=boundary)
@@ -253,6 +262,18 @@ class ResearchSession:
             det.mrz_polygon=None
             evidence.update(state='ABSENT',credible=False,current_yolo_present=False,held=False,source='unreliable_page')
             return det,evidence
+        if self.cfg.get('capture_viewport') and evidence['current_yolo_present']:
+            guard=mrz_completeness(det,frame.shape,self.cfg)
+            evidence['completeness']=guard
+            evidence['current_mrz_reliable']=guard['complete']
+            if not guard['complete']:
+                # Keep candidate geometry in diagnostics only; incomplete text
+                # cannot seed a hold or authorize downstream quality diagnoses.
+                evidence['candidate_polygon']=det.mrz_polygon.tolist()
+                evidence.update(state='INCOMPLETE',credible=False)
+                det.mrz_polygon=None
+                self.last_yolo_time=None; self.last_text_evidence=False
+                return det,evidence
         if mode!='preview':
             return det,evidence
         if not det.found:
@@ -295,7 +316,8 @@ class ResearchSession:
         for side, info in sides.items():
             info['geometry_cut_score']=info['cut_score']
             info['content_at_cut']=content[side]
-            info['cut_score']=max(info['cut_score'],content[side]['score'])
+            info['cut_score']=max(info['cut_score'],content[side]['score'],
+                mrz.get('completeness',{}).get('sides',{}).get(side,0.))
             if info['cut_score']>=self.cfg['side_block']:
                 info['state']='MISSING'
         g['legacy_crop_risk']=g['crop_risk']
@@ -370,6 +392,8 @@ class ResearchSession:
             self.guidance='PLACE_PASSPORT_IN_FRAME'
             self.guidance_since=now
             return dict(default,code='PLACE_PASSPORT_IN_FRAME',source_issue='PASSPORT_NOT_FOUND',severity=1.)
+        if self.cfg.get('capture_viewport'):
+            return self.viewport_guidance(default,active,scores,research,now,mode)
         if research.get('mrz',{}).get('current_yolo_present') is False:
             active=[c for c in active if c!='MRZ_GLARE']
             scores=dict(scores,MRZ_GLARE=0.)
@@ -426,9 +450,41 @@ class ResearchSession:
         source=candidates[chosen][1]
         return dict(default,code=chosen,source_issue=source,severity=scores.get(source))
 
+    def viewport_guidance(self, default, active, scores, research, now, mode):
+        mrz=research.get('mrz',{})
+        cuts=research.get('cut_scores',{})
+        missing=[s for s,v in cuts.items() if v>=self.cfg['side_block']]
+        source=None
+        if missing:
+            code=ACTIONS[missing[0]] if len(missing)==1 else 'SHOW_ALL_EDGES'
+            source='DOCUMENT_INCOMPLETE'
+        elif research.get('recent_strong_motion') and any(c in active for c in
+                ('HOLD_STEADY','MRZ_NOT_FOUND','QUALITY_UNCERTAIN','BLUR','LOCALIZATION_UNCERTAIN')):
+            # Causal exception: sudden missing text under strong motion.
+            code='HOLD_STEADY'; source='HOLD_STEADY'
+        elif mrz.get('state') in ('ABSENT','INCOMPLETE'):
+            code='SHOW_BOTTOM_TEXT'; source='MRZ_NOT_FOUND'
+        else:
+            stages=[('HOLD_STEADY',),('ROTATED','PERSPECTIVE_TOO_HIGH','MOVE_LEFT','MOVE_RIGHT','MOVE_UP','MOVE_DOWN'),
+                    ('LOW_RESOLUTION','PASSPORT_TOO_FAR','PASSPORT_TOO_CLOSE'),
+                    ('MRZ_GLARE','TOO_DARK','TOO_BRIGHT','GLARE','BLUR','LOW_CONTRAST','NOISE','QUALITY_UNCERTAIN')]
+            mapping={'LOW_RESOLUTION':'MOVE_CLOSER','PASSPORT_TOO_FAR':'MOVE_CLOSER','PASSPORT_TOO_CLOSE':'MOVE_FARTHER',
+                'MRZ_GLARE':'TILT_TO_REMOVE_BOTTOM_REFLECTION','TOO_DARK':'INCREASE_LIGHT','TOO_BRIGHT':'REDUCE_DIRECT_LIGHT',
+                'GLARE':'REDUCE_REFLECTION','BLUR':'WAIT_FOR_FOCUS','QUALITY_UNCERTAIN':'HOLD_STEADY'}
+            code='READY' if default.get('code') in (None,'READY') else 'HOLD_STEADY'
+            for stage in stages:
+                allowed=[c for c in stage if c in active and not (c=='MRZ_GLARE' and
+                    (not mrz.get('current_yolo_present') or not mrz.get('current_mrz_reliable',True)))]
+                if allowed:
+                    source=max(allowed,key=lambda c:float(scores.get(c) or 0.))
+                    code=mapping.get(source,source); break
+        self.guidance=code; self.guidance_since=now
+        return dict(default,code=code,source_issue=source,severity=scores.get(source))
+
 
 GUIDANCE_TEXT = {
     'READY': 'Ready to capture',
+    'MOVE_FARTHER': 'Move the passport farther from the camera',
     'MOVE_CLOSER': 'Move the passport closer',
     'MOVE_RIGHT': 'Move the passport to the right',
     'MOVE_LEFT': 'Move the passport to the left',
@@ -455,3 +511,23 @@ GUIDANCE_TEXT = {
 
 def guidance_text(code):
     return GUIDANCE_TEXT.get(code, 'Center the passport and hold it steady')
+
+
+def mrz_completeness(det, shape, cfg):
+    """Broad capture-only guard; boundary contact is not a four-page-corner rule."""
+    p=order_quad(det.polygon); m=order_quad(det.mrz_polygon)
+    lo,hi=m.min(0),m.max(0); height,width=shape[:2]
+    gaps=dict(left=float(lo[0]),right=float(width-1-hi[0]),top=float(lo[1]),bottom=float(height-1-hi[1]))
+    sides={s:float(g<=cfg['mrz_edge_px']) for s,g in gaps.items()}
+    # Project into page coordinates for rotation/perspective-tolerant priors.
+    transform=cv2.getPerspectiveTransform(p,box_quad([0,0,1,1]))
+    rel=cv2.perspectiveTransform(m[None],transform)[0]
+    lengths=np.linalg.norm(np.roll(m,-1,axis=0)-m,axis=1)
+    aspect=float((lengths[0]+lengths[2])/max(1.,lengths[1]+lengths[3]))
+    width_ratio=float(np.ptp(rel[:,0])); center_y=float(rel[:,1].mean())
+    shape_bad=width_ratio<cfg['mrz_min_width_ratio'] or aspect<cfg['mrz_min_aspect']
+    # Vertical placement only corroborates weak width/aspect, never alone.
+    placement_bad=center_y<cfg['mrz_min_center_y']
+    risk=max(max(sides.values()),float(shape_bad))
+    return dict(score=risk,sides=sides,gaps_px=gaps,width_ratio=width_ratio,aspect=aspect,
+                center_y=center_y,placement_warning=placement_bad,complete=risk<cfg['side_block'])

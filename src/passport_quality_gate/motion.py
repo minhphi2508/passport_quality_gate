@@ -18,6 +18,8 @@ class MotionAnalyzer:
         self.filtered_speed = 0.0
 
     def update(self, det, shape, timestamp):
+        if self.config.get('normalization')=='page_relative':
+            return self._page_relative(det,timestamp)
         p = np.asarray(det.polygon, np.float32) / np.array(
             [shape[1], shape[0]], np.float32
         )
@@ -69,4 +71,27 @@ class MotionAnalyzer:
                 )
 
         self.previous = state
+        return result
+
+    def _page_relative(self, det, timestamp):
+        p=np.asarray(det.polygon,np.float64)
+        center=p.mean(0)
+        diagonal=max(1.,float((np.linalg.norm(p[2]-p[0])+np.linalg.norm(p[3]-p[1]))/2))
+        a=p[1]-p[0]; b=p[3]-p[0]
+        scale=max(1.,float(np.sqrt(abs(a[0]*b[1]-a[1]*b[0]))))
+        result=dict(raw_speed=0.,speed=0.,score=0.,observed=False,center_delta=0.,scale_delta=0.,normalization='page_relative')
+        if self.previous is not None:
+            t,c,s,d=self.previous; dt=timestamp-t
+            if dt<=0: raise ValueError('Preview timestamps must strictly increase')
+            if dt<2.:
+                dc=float(np.linalg.norm(center-c)/((diagonal+d)/2))
+                ds=abs(float(np.log(scale/s)))
+                raw=max(max(0.,dc-self.config['center_deadzone']),max(0.,ds-self.config['scale_deadzone']))/dt
+                alpha=self.config['ema_alpha']
+                self.filtered_speed=alpha*raw+(1-alpha)*self.filtered_speed
+                result.update(raw_speed=raw,speed=self.filtered_speed,
+                    score=ramp(self.filtered_speed,self.config['speed_good'],self.config['speed_bad']),
+                    observed=True,center_delta=dc,scale_delta=ds)
+            else: self.filtered_speed=0.
+        self.previous=(timestamp,center,scale,diagonal)
         return result

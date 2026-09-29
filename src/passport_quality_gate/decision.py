@@ -285,7 +285,7 @@ class DecisionEngine:
             # No 4-edge or positive-margin requirement in VNext final capture.
             if evidence is not None:
                 mrz_state=evidence.get('mrz_state','WEAK')
-                scores['MRZ_NOT_FOUND']=float(mrz_state=='ABSENT')
+                scores['MRZ_NOT_FOUND']=float(mrz_state=='ABSENT' or (self.config['research'].get('capture_viewport',False) and mrz_state=='INCOMPLETE'))
                 scores['LOCALIZATION_UNCERTAIN']=float(not evidence.get('page_confident',False))
                 if not evidence.get('mrz_present',False):
                     scores['QUALITY_UNCERTAIN']=1.

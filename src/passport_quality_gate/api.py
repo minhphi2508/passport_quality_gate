@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from copy import deepcopy
 from typing import Any, Mapping, Optional, Union
 
 import numpy as np
@@ -212,6 +213,39 @@ class PassportQualityGate:
             timestamp=timestamp,
             capture_context="document_crop",
         ))
+
+    def _require_viewport_profile(self):
+        if not self.config.get('research',{}).get('capture_viewport',False):
+            raise ValueError('Explicit ROI methods require configs/research_v4.yaml')
+
+    def analyze_roi_preview(self, roi, *, timestamp=None, viewport_metadata=None):
+        """Preferred V4 API: input consists ONLY of product-visible ROI pixels."""
+        self._require_viewport_profile()
+        # A changed physical viewport or ROI resolution starts fresh evidence.
+        key=(tuple(roi.shape),repr(viewport_metadata))
+        if getattr(self,'_viewport_key',key)!=key: self.reset()
+        self._viewport_key=key
+        result=self.analyze_preview(roi,(0.,0.,1.,1.),timestamp=timestamp)
+        result['capture_viewport']=deepcopy(viewport_metadata) or {'analysis_frame_size':result['frame_size'],'input':'roi_pixels'}
+        return result
+
+    def analyze_roi_final(self, roi, *, timestamp=None, viewport_metadata=None):
+        """Final-check the selected ROI itself, without recropping or resizing."""
+        self._require_viewport_profile()
+        result=self.analyze_final(roi,(0.,0.,1.,1.),timestamp=timestamp)
+        result['capture_viewport']=deepcopy(viewport_metadata) or {'analysis_frame_size':result['frame_size'],'input':'roi_pixels'}
+        return result
+
+    def analyze_capture_preview(self, frame, capture_viewport, *, timestamp=None, preview_transform=None):
+        """Convenience V4 path; explicitly crop BEFORE localization/analysis."""
+        self._require_viewport_profile()
+        roi,meta=capture_viewport.extract(frame,transform=preview_transform)
+        return self.analyze_roi_preview(roi,timestamp=timestamp,viewport_metadata=meta)
+
+    def analyze_capture_final(self, frame, capture_viewport, *, timestamp=None, preview_transform=None):
+        self._require_viewport_profile()
+        roi,meta=capture_viewport.extract(frame,transform=preview_transform)
+        return self.analyze_roi_final(roi,timestamp=timestamp,viewport_metadata=meta)
 
     # Convenience methods for consumers that only want the documented stable
     # contract and do not need research diagnostics from the Golden engine.

@@ -1,8 +1,8 @@
 # Passport Quality Gate
 
-> **V3 corrective research branch:** current implementation and camera instructions are in
-> [V3 Corrective Handoff](docs/V3_CORRECTIVE_HANDOFF.md). Default FP2 behavior remains available;
-> the original Golden manifest is intentionally unchanged and therefore flags the two
+> **V4 capture-viewport research branch:** current implementation and camera instructions are in
+> [V4 Capture Viewport Handoff](docs/V4_CAPTURE_VIEWPORT_HANDOFF.md). Default FP2 behavior remains available;
+> the original Golden manifest is intentionally unchanged and therefore flags the three
 > research-touched core files on this branch. SDK version/release tags are unchanged.
 
 **Pre-OCR passport capture quality assessment, capture guidance, recent-best-frame selection, and passport-page handoff.**

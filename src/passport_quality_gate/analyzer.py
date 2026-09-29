@@ -273,7 +273,9 @@ class Analyzer:
                 low_resolution_score=rd['low_resolution_score'] if rd else None,
                 low_contrast_score=rd['low_contrast_score'] if rd else None,
                 noise_score=rd['noise_score'] if rd else None)
+            t=perf_counter()
             m=self.motion.update(det,frame.shape,now) if mode=='preview' else None
+            if self.config.get('research',{}).get('capture_viewport'): times['motion']=(perf_counter()-t)*1000
             q['motion_score']=m['score'] if m else 0.
             if self.research is not None:
                 q['mrz_glare_score']=mrz_glare_score
@@ -299,7 +301,7 @@ class Analyzer:
                 evidence['mrz_state']=mrz_evidence['state']
                 evidence['text_detail_current_observed']=evidence['text_detail_observed']
                 evidence['text_detail_held']=False
-                if mode=='preview' and mrz_evidence['current_yolo_present']:
+                if mode=='preview' and mrz_evidence['current_yolo_present'] and mrz_evidence.get('current_mrz_reliable',True):
                     self.research.last_text_evidence=evidence['text_detail_observed']
                 elif mode=='preview' and mrz_evidence['held']:
                     # Debounce previously established text evidence only. No stale
@@ -367,7 +369,9 @@ class Analyzer:
                 guidance['code']='CENTER_AND_HOLD'
             from .research import guidance_text
             guidance['text']=guidance_text(guidance['code'])
-            if not research.get('page_reliable',False):
+            if not research.get('page_reliable',False) or (self.config['research'].get('capture_viewport') and (
+                    any(v>=self.config['research']['side_block'] for v in research.get('cut_scores',{}).values()) or
+                    research.get('mrz',{}).get('state') in ('ABSENT','INCOMPLETE'))):
                 advisory_guidance=[]
             times['total']=(perf_counter()-start)*1000
         if guidance['severity'] is None and issue not in (None,'READY'):
