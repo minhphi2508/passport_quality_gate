@@ -1,7 +1,7 @@
 # Passport Quality Gate
 
-> **Research branch:** opt-in VNext implementation and camera test instructions are in
-> [VNext Research Handoff](docs/VNEXT_RESEARCH_HANDOFF.md). Default FP2 behavior remains available;
+> **V3 corrective research branch:** current implementation and camera instructions are in
+> [V3 Corrective Handoff](docs/V3_CORRECTIVE_HANDOFF.md). Default FP2 behavior remains available;
 > the original Golden manifest is intentionally unchanged and therefore flags the two
 > research-touched core files on this branch. SDK version/release tags are unchanged.
 

@@ -90,6 +90,7 @@ def to_public_result(result: Mapping[str, Any]) -> dict[str, Any]:
     result = _normalize_final_result(result)
     timing = result.get("timing_ms") or {}
     return {
+        **({"guidance_text": result["guidance_text"]} if "guidance_text" in result else {}),
         "capture_allowed": bool(result.get("capture_allowed")),
         "capture_quality_state": result.get("capture_quality_state"),
         "workflow_state": result.get("workflow_state"),
@@ -147,7 +148,7 @@ class PassportQualityGate:
     def metadata(self) -> dict[str, Any]:
         return {
             "sdk_candidate_version": SDK_CANDIDATE_VERSION,
-            "quality_policy": "VNEXT-RESEARCH" if self.config.get("research", {}).get("enabled", False) else QUALITY_POLICY,
+            "quality_policy": self.config["research"]["profile"] if self.config.get("research", {}).get("enabled", False) else QUALITY_POLICY,
             "device": self.device,
             "production_validated": False,
         }

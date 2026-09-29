@@ -78,16 +78,18 @@ def test_complete_weak_edges_and_close_margin_can_ready():
     assert r['geometry']['legacy_crop_risk']>r['geometry']['crop_risk']
 
 
-def test_classical_fallback_requires_two_rows_and_avoids_detector_miss_block():
+def test_classical_fallback_two_rows_are_telemetry_only_v3():
     image,det,_=sample(); det.mrz_polygon=None; det.mrz_confidence=0.
     fallback=fallback_mrz(image,det,config()['research'])
     assert fallback['score']>=.75, fallback
     updated,state=prepare_detection(image,det,config()['research'],.4)
     assert det.mrz_polygon is None  # caller-owned input is not mutated
-    assert state['state']=='WEAK' and state['credible']
+    # V3 explicitly revokes the V2 fallback acceptance authority.
+    assert state['state']=='ABSENT' and not state['credible']
+    assert updated.mrz_polygon is None
     r=settle(image,det)
-    assert 'MRZ_NOT_FOUND' not in r['blocking_issues']
-    assert r['capture_allowed'], r['blocking_issues']
+    assert 'MRZ_NOT_FOUND' in r['blocking_issues']
+    assert not r['capture_allowed']
     blank=np.full_like(image,220)
     assert fallback_mrz(blank,det,config()['research'])['score']==0.
 
@@ -98,6 +100,9 @@ def test_localized_component_is_not_clamped_by_global_raw_glare():
         'mean_context_delta':25.,'clipping_ratio':.8}]}
     cfg=config()['glare']
     assert _confirmed_glare_score(metric,{},cfg)<=.08
+    # V3: spatial candidate alone is insufficient, even with a bright blob.
+    assert _confirmed_glare_score(metric,{},cfg,localized=True)==0.
+    metric['mrz_damage_score']=1.
     assert _confirmed_glare_score(metric,{},cfg,localized=True)>=.6
     metric['regions']=[]
     assert _confirmed_glare_score(metric,{},cfg,localized=True)<.1
@@ -127,7 +132,7 @@ def test_guidance_recovery_critical_preemption_and_hysteresis():
     scores['LOW_CONTRAST']=.85
     assert session.guidance_for({},active,scores,{},.1,'preview')['code']=='WAIT_FOR_FOCUS'
     active.append('MRZ_GLARE'); scores['MRZ_GLARE']=.8
-    assert session.guidance_for({},active,scores,{},.2,'preview')['code']=='REDUCE_REFLECTION_ON_MRZ'
+    assert session.guidance_for({},active,scores,{},.2,'preview')['code']=='TILT_TO_REMOVE_BOTTOM_REFLECTION'
     assert session.guidance_for({'code':'READY'},[],{}, {},.3,'preview')['code']=='READY'
 
 
@@ -146,7 +151,7 @@ def test_one_detector_pass_final_exact_pixels_and_public_metadata():
     final=gate.analyze_final(image,GUIDE,timestamp=1.)
     assert localizer.calls==2
     assert final['capture_allowed']==(final['state']=='ACCEPT')
-    assert gate.runtime_info()['quality_policy']=='VNEXT-RESEARCH'
+    assert gate.runtime_info()['quality_policy']=='VNEXT-CORRECTIVE-V3'
     assert r['research']['mrz']['state']=='STRONG'
 
 
@@ -172,7 +177,8 @@ def test_image_level_clipped_detector_boxes(side,shift,action):
     assert result['research']['cut_scores'][side]>=.55
     assert result['guidance_code']==action
     if side=='bottom':
-        assert result['research']['mrz']['state']=='ABSENT'
+        # A visible partial YOLO MRZ does not override independent bottom crop.
+        assert result['research']['cut_scores']['bottom']>=.55
 
 
 def test_multi_side_guidance_and_localization_only_neutral():
@@ -213,12 +219,12 @@ def test_recovery_and_no_cross_document_temporal_glare():
     assert result['guidance_code']=='READY'
 
 
-def test_no_mrz_no_cut_is_uncertain_not_fabricated_physical_absence():
+def test_no_yolo_mrz_blocks_even_without_cut_evidence_v3():
     image,det,_=sample(); image[:]=220; det.mrz_polygon=None; det.mrz_confidence=0.
     result=settle(image,det)
     assert not result['capture_allowed']
-    assert result['research']['mrz']['state']=='WEAK'
-    assert 'MRZ_NOT_FOUND' not in result['blocking_issues']
+    assert result['research']['mrz']['state']=='ABSENT'
+    assert 'MRZ_NOT_FOUND' in result['blocking_issues']
     assert 'QUALITY_UNCERTAIN' in result['blocking_issues']
 
 

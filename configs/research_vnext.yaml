@@ -1,7 +1,29 @@
 # Explicit opt-in. Omitted profile preserves FP2-GOLDEN-ACTUAL behavior.
 research:
   enabled: true
-  profile: VNEXT-RESEARCH
+  profile: VNEXT-CORRECTIVE-V3
+  mrz_miss_debounce_s: 0.4
+  mrz_hold_geometry_jump: 0.12
+  fallback_telemetry: true
+  guidance_strong_motion: 0.8
+  guidance_motion_memory_s: 0.6
+  cut_strip_fraction: 0.045
+  cut_contact_px: 2.0
+  cut_touch_px: 0
+  cut_min_depth_px: 3
+  cut_min_component_area: 5
+  cut_max_component_span: 0.15
+  cut_components_hard: 2
+  cut_ink_delta: 35
+  cut_contrast_soft: 25
+  cut_contrast_hard: 65
+  glare_ink_level: 150
+  glare_contrast_low: 8
+  glare_contrast_good: 30
+  glare_edges_low: 0.03
+  glare_edges_good: 0.16
+  glare_neighbor_ink_soft: 0.025
+  glare_neighbor_ink_hard: 0.12
   boundary_samples: 48
   boundary_offset_px: 4
   color_transition: 22.0

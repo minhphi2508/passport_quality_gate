@@ -1,5 +1,7 @@
 # VNext research: manual camera handoff
 
+> Historical V2 handoff for commit 93923f6. For the current branch use [V3 corrective handoff](V3_CORRECTIVE_HANDOFF.md); the fallback-authority and glare policies described below are superseded.
+
 This branch implements the supplied `PASSPORT_QUALITY_GATE_ASTRA_EXECUTION_HANDOFF_v2.pdf` against main `b0c3f4d6d4d09d684626fb9b9a8094add7b8c633`. Main matched the expected handoff exactly. Before quality edits: Golden verification passed all 13 files; baseline tests: **126 passed in 36.35 s**.
 
 Research only; manual acceptance is pending. No new release, no production-validation claim.

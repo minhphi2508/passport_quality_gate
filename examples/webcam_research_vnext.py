@@ -4,6 +4,7 @@ Metrics only unless --record-images is explicitly supplied. Preview inference
 is throttled independently of camera display. Final always uses selected pixels.
 """
 from concurrent.futures import ThreadPoolExecutor
+from passport_quality_gate.research import guidance_text
 import argparse
 import json
 from pathlib import Path
@@ -97,8 +98,9 @@ def main():
             if latest:
                 color = (40, 220, 40) if latest['capture_allowed'] else (0, 190, 255)
                 cv2.polylines(display, [np.asarray(latest['guide_polygon'], np.int32)], True, color, 2)
-                lines = [f"{args.profile}: {latest['state']} | {latest['guidance_code']}", 'D debug | C final/crop | R reset | Q quit']
+                lines = [f"{latest.get('guidance_text', guidance_text(latest['guidance_code']))}", 'D debug | C final/crop | R reset | Q quit']
                 if debug:
+                    lines += [f"{args.profile}: {latest['state']} | {latest['guidance_code']}"]
                     lines += [f"block: {latest['blocking_issues']}", f"timing: {latest['timing_ms']['total']:.1f} ms"]
                     research = latest.get('research', {})
                     lines += [f"cuts: {research.get('cut_scores', {})}", f"MRZ: {research.get('mrz', {}).get('state')} glare: {latest['quality'].get('mrz_glare_score')}"]

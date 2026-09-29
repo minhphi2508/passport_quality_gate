@@ -93,8 +93,9 @@ def _confirmed_glare_score(glare_metrics, readability, cfg, *, localized=False):
     )
     confirmed=max(mrz_risk, component_risk, body_risk, area_risk, extreme_risk)
     if localized:
-        base=max(mrz_risk, body_risk, area_risk, extreme_risk)
-        return max(min(float(raw), float(base)), float(component_risk))
+        local_damage=float(glare_metrics.get('mrz_damage_score') or 0.)
+        base=max(mrz_risk*local_damage, body_risk, area_risk, extreme_risk)
+        return max(min(float(raw), float(base)), float(component_risk)*local_damage)
     return min(float(raw), float(confirmed))
 
 
@@ -226,9 +227,9 @@ class Analyzer:
         t=perf_counter(); det=detection if detection is not None else self.localizer.locate(frame,mode); times['localization']=(perf_counter()-t)*1000
         research={}
         if self.research is not None:
-            from .research import prepare_detection
             t=perf_counter()
-            det,mrz_evidence=prepare_detection(frame,det,self.config['research'],self.config['policy'][context]['min_mrz_confidence'])
+            det,mrz_evidence=self.research.prepare(frame,det,self.config['policy'][context]['min_mrz_confidence'],now,mode,
+                page_reliable=det.found and det.confidence>=self.config['policy'][context]['min_page_confidence'])
             times['mrz_presence']=(perf_counter()-t)*1000
         g={}; q={}; raw={}; limitations=[]; evidence={}
         if det.found:
@@ -257,10 +258,11 @@ class Analyzer:
                 t=perf_counter()
                 local_glare=self.research.mrz_glare(frame,det,self.config['glare'],now,mode)
                 # Reuse candidate components from the page path without any global-area cap.
+                gl['mrz_damage_score']=local_glare['score']
                 component_only=dict(gl,glare_score=0.)
                 component_score=_confirmed_glare_score(component_only,rd,self.config['glare'],localized=True) or 0.
                 mrz_glare_score=max(component_score,local_glare['score'])
-                confirmed_glare=max(confirmed_glare or 0.,mrz_glare_score)
+                confirmed_glare=max(_confirmed_glare_score(gl,rd,self.config['glare'],localized=True) or 0.,mrz_glare_score)
                 research['mrz_glare']=local_glare
                 research['mrz_glare']['page_component_score']=component_score
                 times['mrz_local_glare']=(perf_counter()-t)*1000
@@ -276,9 +278,11 @@ class Analyzer:
             if self.research is not None:
                 q['mrz_glare_score']=mrz_glare_score
                 research['motion_score']=q['motion_score']
+                research['recent_strong_motion']=self.research.motion_evidence(q['motion_score'],now,mode)
             raw=dict(exposure=e,blur=b,glare=gl,readability=rd,motion=m)
             policy=self.config['policy'][context]
             page_confident=det.confidence>=policy['min_page_confidence']
+            if self.research is not None: research['page_reliable']=page_confident
             mrz_present=det.mrz_polygon is not None and det.mrz_confidence>=policy['min_mrz_confidence']
             if self.research is not None: mrz_present=mrz_evidence['credible']
             if page_confident and mrz_present and det.corners_reliable: grade='A'
@@ -291,7 +295,17 @@ class Analyzer:
                 glare_observed=gl['glare_score'] is not None,localization_grade=grade,
                 perspective_verified=bool(det.corners_reliable),corner_evidence=det.corner_evidence or {},
             )
-            if self.research is not None: evidence['mrz_state']=mrz_evidence['state']
+            if self.research is not None:
+                evidence['mrz_state']=mrz_evidence['state']
+                evidence['text_detail_current_observed']=evidence['text_detail_observed']
+                evidence['text_detail_held']=False
+                if mode=='preview' and mrz_evidence['current_yolo_present']:
+                    self.research.last_text_evidence=evidence['text_detail_observed']
+                elif mode=='preview' and mrz_evidence['held']:
+                    # Debounce previously established text evidence only. No stale
+                    # ROI is measured or allowed to generate a new MRZ diagnosis.
+                    evidence['text_detail_held']=self.research.last_text_evidence
+                    evidence['text_detail_observed'] |= evidence['text_detail_held']
             evidence['document_completeness_score']=self.engine.document_incomplete_score(g,evidence,context)
             evidence['document_completeness_ok']=not self.engine.active('DOCUMENT_INCOMPLETE',evidence['document_completeness_score'])
             if not self.config['blur']['calibrated']: limitations.append('QUALITY_THRESHOLDS_NOT_OCR_CALIBRATED')
@@ -302,7 +316,11 @@ class Analyzer:
             self.debug=dict(crop=crop,valid=valid,mrz=mrz,glare_mask=mask,blur_heatmap=heat,homography=matrix)
         else:
             self.motion.reset(); e={}
-            if self.research is not None: self.research.reset()
+            if self.research is not None:
+                recent_motion=self.research.motion_evidence(0.,now,mode)
+                self.research.crops.clear()
+                research['recent_strong_motion']=recent_motion
+                research['page_reliable']=False
 
         t=perf_counter(); scores=self.engine.scores(det.found,g,q,evidence,context)
         blockers_policy=self.engine.blocking_codes(context)
@@ -347,6 +365,10 @@ class Analyzer:
             guidance=self.research.guidance_for(guidance,active_blockers,scores,research,now,mode)
             if guidance['code']=='SHOW_ALL_EDGES' and issue=='LOCALIZATION_UNCERTAIN':
                 guidance['code']='CENTER_AND_HOLD'
+            from .research import guidance_text
+            guidance['text']=guidance_text(guidance['code'])
+            if not research.get('page_reliable',False):
+                advisory_guidance=[]
             times['total']=(perf_counter()-start)*1000
         if guidance['severity'] is None and issue not in (None,'READY'):
             guidance['severity']=scores.get(issue)
@@ -366,9 +388,10 @@ class Analyzer:
             all_issues.append(dict(code=c,score=v,active=self.engine.active(c,v),blocking=c in blocking_set,
                                    enter_threshold=self.engine.enter_threshold(c)))
         return dict(
-            **({'research':research,'quality_policy':'VNEXT-RESEARCH'} if self.research is not None else {}),
+            **({'research':research,'quality_policy':self.config['research']['profile']} if self.research is not None else {}),
             schema_version='0.4.3-fp2.1',mode=mode,capture_context=context,state=state,workflow_state=workflow,
             primary_issue=issue,passport_found=det.found,frame_size=dict(width=frame.shape[1],height=frame.shape[0]),timestamp_s=now,
+            **({'guidance_text':guidance['text']} if self.research is not None else {}),
             guidance_code=guidance['code'],guidance=guidance,requires_final_check=mode=='preview',confidence=det.confidence,
             localization=det.as_dict(),guide_polygon=guide.tolist(),geometry=g,quality=q,raw_metrics=raw,all_issues=all_issues,
             raw_decision=raw_decision,temporal=stable,timing_ms=times,limitations=limitations,
