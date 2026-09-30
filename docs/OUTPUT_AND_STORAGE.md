@@ -28,7 +28,7 @@ The application should not need to save an intermediate JPEG simply to call OCR.
 
 ## Example scripts
 
-`examples/webcam_demo.py` and `examples/best_frame_compare.py` may write images only when explicitly run in an opt-in test/debug mode.
+`examples/webcam_capture.py` writes images only when `--record-images` is explicitly supplied.
 
 The current webcam demo can save:
 

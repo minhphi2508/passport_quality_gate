@@ -66,8 +66,7 @@ def _resolve_device(device: Union[str, int]) -> Union[str, int]:
 def _normalize_final_result(result: Mapping[str, Any]) -> dict[str, Any]:
     """Repair final output aliases without changing the frozen decision.
 
-    Normalize the shared ACCEPT/RETAKE aliases for both the default Golden
-    profile and the explicit opt-in research profile.
+    Normalize shared ACCEPT/RETAKE aliases across capture profiles.
     """
     out = dict(result)
     if out.get("mode") == "final" and out.get("state") in {"ACCEPT", "RETAKE"}:
@@ -84,9 +83,8 @@ def _normalize_final_result(result: Mapping[str, Any]) -> dict[str, Any]:
 def to_public_result(result: Mapping[str, Any]) -> dict[str, Any]:
     """Return the small JSON-ready contract intended for app/server consumers.
 
-    The frozen engine emits many research diagnostics. Those remain available
-    from analyze_*(), but only this compact field set is treated as the stable
-    external contract for SDK 0.1.x.
+    Detailed diagnostics remain available from analyze_*(), while this compact
+    field set is the external integration contract.
     """
     result = _normalize_final_result(result)
     timing = result.get("timing_ms") or {}
@@ -106,7 +104,7 @@ def to_public_result(result: Mapping[str, Any]) -> dict[str, Any]:
 
 
 class PassportQualityGate:
-    """Stable integration wrapper; FP2 by default, VNext only with explicit config.
+    """Passport capture-quality integration wrapper.
 
     This class does not open a camera, render UI, save images, or create logs.
     One instance should be used per live preview stream because FP2 preview
@@ -149,7 +147,7 @@ class PassportQualityGate:
     def metadata(self) -> dict[str, Any]:
         return {
             "sdk_candidate_version": SDK_CANDIDATE_VERSION,
-            "quality_policy": self.config["research"]["profile"] if self.config.get("research", {}).get("enabled", False) else QUALITY_POLICY,
+            "quality_policy": self.config["capture_policy"]["profile"] if self.config.get("capture_policy", {}).get("enabled", False) else QUALITY_POLICY,
             "device": self.device,
             "production_validated": False,
         }
@@ -215,8 +213,8 @@ class PassportQualityGate:
         ))
 
     def _require_viewport_profile(self):
-        if not self.config.get('research',{}).get('capture_viewport',False):
-            raise ValueError('Explicit ROI methods require configs/research_v4.yaml')
+        if not self.config.get('capture_policy',{}).get('capture_viewport',False):
+            raise ValueError('Explicit ROI methods require configs/capture_viewport.yaml')
 
     def analyze_roi_preview(self, roi, *, timestamp=None, viewport_metadata=None):
         """Preferred V4 API: input consists ONLY of product-visible ROI pixels."""
@@ -247,8 +245,7 @@ class PassportQualityGate:
         roi,meta=capture_viewport.extract(frame,transform=preview_transform)
         return self.analyze_roi_final(roi,timestamp=timestamp,viewport_metadata=meta)
 
-    # Convenience methods for consumers that only want the documented stable
-    # contract and do not need research diagnostics from the Golden engine.
+    # Compact result helpers for app/server integrations.
     def analyze_preview_public(self, frame: np.ndarray, guide_box: GuideBoxLike, *, timestamp: Optional[float] = None) -> dict[str, Any]:
         return to_public_result(self.analyze_preview(frame, guide_box, timestamp=timestamp))
 

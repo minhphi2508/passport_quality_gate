@@ -1,7 +1,6 @@
 """Robust time-normalized page motion for live preview.
 
-The detector box naturally jitters a few pixels between frames.  V4.1 filters
-that jitter before turning motion into HOLD_STEADY severity.
+Small detector jitter is filtered before it becomes HOLD_STEADY severity.
 """
 import numpy as np
 from .readability import ramp

@@ -53,11 +53,8 @@ def _confirmed_glare_score(glare_metrics, readability, cfg, *, localized=False):
         * _ramp01(clipped, icfg.get('clip_soft',0.25), icfg.get('clip_hard',0.75))
     )
 
-    # FP2.1 targeted MRZ rule: the broad aggregate mask remains permissive,
-    # but one *connected* glare-like component that materially crosses the MRZ
-    # is treated much more strictly.  This avoids FP3's failure mode where the
-    # aggregate MRZ overlap of ordinary bright paper drove glare to ~1.0, while
-    # still catching a localized reflection strip/blob over OCR-critical MRZ.
+    # A connected glare component crossing the bottom text receives stricter
+    # treatment than the broad aggregate highlight mask.
     component_risk=0.0
     ccfg=icfg.get('mrz_component', {})
     if ccfg.get('enabled', True):
@@ -100,7 +97,7 @@ def _confirmed_glare_score(glare_metrics, readability, cfg, *, localized=False):
 
 
 class Analyzer:
-    """One instance per stream. BGR uint8 inputs; backwards-compatible V3 keys remain."""
+    """Stateful analyzer for one capture stream. Inputs are BGR uint8 frames."""
     def __init__(self, localizer, config=None):
         self.config = load_config(config)
         self.localizer = localizer
@@ -108,14 +105,14 @@ class Analyzer:
         self.temporal = TemporalStabilizer(self.engine)
         self.motion = MotionAnalyzer(self.config['motion'])
         self.debug = {}
-        self.research = None
-        if self.config.get("research", {}).get("enabled", False):
-            from .research import ResearchSession
-            self.research = ResearchSession(self.config["research"])
+        self.capture_policy = None
+        if self.config.get("capture_policy", {}).get("enabled", False):
+            from .capture_policy import CapturePolicySession
+            self.capture_policy = CapturePolicySession(self.config["capture_policy"])
 
     def reset(self):
         self.temporal.reset(); self.motion.reset(); self.debug = {}
-        if self.research is not None: self.research.reset()
+        if self.capture_policy is not None: self.capture_policy.reset()
 
     def _context(self, mode, capture_context):
         if capture_context is None:
@@ -132,10 +129,8 @@ class Analyzer:
             out.append('PERSPECTIVE_UNVERIFIED')
         policy=self.config['policy'][context]
         blocking=set(policy.get('blocking', []))
-        # V4.2: an advisory can be either an active non-blocking issue (for
-        # example the page is smaller than the ideal guide but still readable)
-        # or a near-threshold quality warning.  This keeps UI composition advice
-        # separate from actual capture eligibility.
+        # Advisory issues can be active without vetoing capture, or can be
+        # surfaced near their blocking threshold.
         for code in policy.get('advisory_candidates', []):
             value=scores.get(code)
             if value is None:
@@ -225,19 +220,19 @@ class Analyzer:
         start=perf_counter(); times={}; self.debug={}
         guide=guide_polygon(guide_box,frame.shape)
         t=perf_counter(); det=detection if detection is not None else self.localizer.locate(frame,mode); times['localization']=(perf_counter()-t)*1000
-        research={}
-        if self.research is not None:
+        capture_diagnostics={}
+        if self.capture_policy is not None:
             t=perf_counter()
-            det,mrz_evidence=self.research.prepare(frame,det,self.config['policy'][context]['min_mrz_confidence'],now,mode,
+            det,mrz_evidence=self.capture_policy.prepare(frame,det,self.config['policy'][context]['min_mrz_confidence'],now,mode,
                 page_reliable=det.found and det.confidence>=self.config['policy'][context]['min_page_confidence'])
             times['mrz_presence']=(perf_counter()-t)*1000
         g={}; q={}; raw={}; limitations=[]; evidence={}
         if det.found:
             det.polygon=order_quad(det.polygon)
             t=perf_counter(); g=analyze_geometry(det,guide,frame.shape,self.config['geometry']); times['geometry']=(perf_counter()-t)*1000
-            if self.research is not None:
+            if self.capture_policy is not None:
                 t=perf_counter()
-                research=self.research.observe_geometry(frame,det,g,mrz_evidence)
+                capture_diagnostics=self.capture_policy.observe_geometry(frame,det,g,mrz_evidence)
                 times['side_completeness']=(perf_counter()-t)*1000
             t=perf_counter(); crop,valid,mrz,matrix=rectify(frame,det,self.config['normalization'][mode+'_width']); times['normalization']=(perf_counter()-t)*1000
             t=perf_counter(); e=exposure(crop,valid,self.config['exposure']); times['exposure']=(perf_counter()-t)*1000
@@ -252,19 +247,19 @@ class Analyzer:
             score=b['blur_score']
             if rd is not None and rd['blur_score'] is not None:
                 score=max(score,rd['blur_score']) if score is not None else rd['blur_score']
-            confirmed_glare=_confirmed_glare_score(gl,rd,self.config['glare'],localized=self.research is not None)
+            confirmed_glare=_confirmed_glare_score(gl,rd,self.config['glare'],localized=self.capture_policy is not None)
             mrz_glare_score=0.
-            if self.research is not None:
+            if self.capture_policy is not None:
                 t=perf_counter()
-                local_glare=self.research.mrz_glare(frame,det,self.config['glare'],now,mode)
+                local_glare=self.capture_policy.mrz_glare(frame,det,self.config['glare'],now,mode)
                 # Reuse candidate components from the page path without any global-area cap.
                 gl['mrz_damage_score']=local_glare['score']
                 component_only=dict(gl,glare_score=0.)
                 component_score=_confirmed_glare_score(component_only,rd,self.config['glare'],localized=True) or 0.
                 mrz_glare_score=max(component_score,local_glare['score'])
                 confirmed_glare=max(_confirmed_glare_score(gl,rd,self.config['glare'],localized=True) or 0.,mrz_glare_score)
-                research['mrz_glare']=local_glare
-                research['mrz_glare']['page_component_score']=component_score
+                capture_diagnostics['mrz_glare']=local_glare
+                capture_diagnostics['mrz_glare']['page_component_score']=component_score
                 times['mrz_local_glare']=(perf_counter()-t)*1000
             gl['candidate_score']=gl.get('glare_score')
             gl['decision_glare_score']=confirmed_glare
@@ -275,18 +270,18 @@ class Analyzer:
                 noise_score=rd['noise_score'] if rd else None)
             t=perf_counter()
             m=self.motion.update(det,frame.shape,now) if mode=='preview' else None
-            if self.config.get('research',{}).get('capture_viewport'): times['motion']=(perf_counter()-t)*1000
+            if self.config.get('capture_policy',{}).get('capture_viewport'): times['motion']=(perf_counter()-t)*1000
             q['motion_score']=m['score'] if m else 0.
-            if self.research is not None:
+            if self.capture_policy is not None:
                 q['mrz_glare_score']=mrz_glare_score
-                research['motion_score']=q['motion_score']
-                research['recent_strong_motion']=self.research.motion_evidence(q['motion_score'],now,mode)
+                capture_diagnostics['motion_score']=q['motion_score']
+                capture_diagnostics['recent_strong_motion']=self.capture_policy.motion_evidence(q['motion_score'],now,mode)
             raw=dict(exposure=e,blur=b,glare=gl,readability=rd,motion=m)
             policy=self.config['policy'][context]
             page_confident=det.confidence>=policy['min_page_confidence']
-            if self.research is not None: research['page_reliable']=page_confident
+            if self.capture_policy is not None: capture_diagnostics['page_reliable']=page_confident
             mrz_present=det.mrz_polygon is not None and det.mrz_confidence>=policy['min_mrz_confidence']
-            if self.research is not None: mrz_present=mrz_evidence['credible']
+            if self.capture_policy is not None: mrz_present=mrz_evidence['credible']
             if page_confident and mrz_present and det.corners_reliable: grade='A'
             elif page_confident and mrz_present: grade='B'
             elif page_confident: grade='C'
@@ -297,16 +292,16 @@ class Analyzer:
                 glare_observed=gl['glare_score'] is not None,localization_grade=grade,
                 perspective_verified=bool(det.corners_reliable),corner_evidence=det.corner_evidence or {},
             )
-            if self.research is not None:
+            if self.capture_policy is not None:
                 evidence['mrz_state']=mrz_evidence['state']
                 evidence['text_detail_current_observed']=evidence['text_detail_observed']
                 evidence['text_detail_held']=False
                 if mode=='preview' and mrz_evidence['current_yolo_present'] and mrz_evidence.get('current_mrz_reliable',True):
-                    self.research.last_text_evidence=evidence['text_detail_observed']
+                    self.capture_policy.last_text_evidence=evidence['text_detail_observed']
                 elif mode=='preview' and mrz_evidence['held']:
                     # Debounce previously established text evidence only. No stale
                     # ROI is measured or allowed to generate a new MRZ diagnosis.
-                    evidence['text_detail_held']=self.research.last_text_evidence
+                    evidence['text_detail_held']=self.capture_policy.last_text_evidence
                     evidence['text_detail_observed'] |= evidence['text_detail_held']
             evidence['document_completeness_score']=self.engine.document_incomplete_score(g,evidence,context)
             evidence['document_completeness_ok']=not self.engine.active('DOCUMENT_INCOMPLETE',evidence['document_completeness_score'])
@@ -318,11 +313,11 @@ class Analyzer:
             self.debug=dict(crop=crop,valid=valid,mrz=mrz,glare_mask=mask,blur_heatmap=heat,homography=matrix)
         else:
             self.motion.reset(); e={}
-            if self.research is not None:
-                recent_motion=self.research.motion_evidence(0.,now,mode)
-                self.research.crops.clear()
-                research['recent_strong_motion']=recent_motion
-                research['page_reliable']=False
+            if self.capture_policy is not None:
+                recent_motion=self.capture_policy.motion_evidence(0.,now,mode)
+                self.capture_policy.crops.clear()
+                capture_diagnostics['recent_strong_motion']=recent_motion
+                capture_diagnostics['page_reliable']=False
 
         t=perf_counter(); scores=self.engine.scores(det.found,g,q,evidence,context)
         blockers_policy=self.engine.blocking_codes(context)
@@ -363,15 +358,15 @@ class Analyzer:
         advisories=self._advisories(evidence,g,scores,context)
         advisory_guidance=self._advisory_guidance(advisories,g,context,scores)
         guidance=self._guidance(issue,g,context)
-        if self.research is not None:
-            guidance=self.research.guidance_for(guidance,active_blockers,scores,research,now,mode)
+        if self.capture_policy is not None:
+            guidance=self.capture_policy.guidance_for(guidance,active_blockers,scores,capture_diagnostics,now,mode)
             if guidance['code']=='SHOW_ALL_EDGES' and issue=='LOCALIZATION_UNCERTAIN':
                 guidance['code']='CENTER_AND_HOLD'
-            from .research import guidance_text
+            from .capture_policy import guidance_text
             guidance['text']=guidance_text(guidance['code'])
-            if not research.get('page_reliable',False) or (self.config['research'].get('capture_viewport') and (
-                    any(v>=self.config['research']['side_block'] for v in research.get('cut_scores',{}).values()) or
-                    research.get('mrz',{}).get('state') in ('ABSENT','INCOMPLETE'))):
+            if not capture_diagnostics.get('page_reliable',False) or (self.config['capture_policy'].get('capture_viewport') and (
+                    any(v>=self.config['capture_policy']['side_block'] for v in capture_diagnostics.get('cut_scores',{}).values()) or
+                    capture_diagnostics.get('mrz',{}).get('state') in ('ABSENT','INCOMPLETE'))):
                 advisory_guidance=[]
             times['total']=(perf_counter()-start)*1000
         if guidance['severity'] is None and issue not in (None,'READY'):
@@ -392,10 +387,10 @@ class Analyzer:
             all_issues.append(dict(code=c,score=v,active=self.engine.active(c,v),blocking=c in blocking_set,
                                    enter_threshold=self.engine.enter_threshold(c)))
         return dict(
-            **({'research':research,'quality_policy':self.config['research']['profile']} if self.research is not None else {}),
+            **({'capture_diagnostics':capture_diagnostics,'quality_policy':self.config['capture_policy']['profile']} if self.capture_policy is not None else {}),
             schema_version='0.4.3-fp2.1',mode=mode,capture_context=context,state=state,workflow_state=workflow,
             primary_issue=issue,passport_found=det.found,frame_size=dict(width=frame.shape[1],height=frame.shape[0]),timestamp_s=now,
-            **({'guidance_text':guidance['text']} if self.research is not None else {}),
+            **({'guidance_text':guidance['text']} if self.capture_policy is not None else {}),
             guidance_code=guidance['code'],guidance=guidance,requires_final_check=mode=='preview',confidence=det.confidence,
             localization=det.as_dict(),guide_polygon=guide.tolist(),geometry=g,quality=q,raw_metrics=raw,all_issues=all_issues,
             raw_decision=raw_decision,temporal=stable,timing_ms=times,limitations=limitations,
@@ -403,6 +398,6 @@ class Analyzer:
             capture_quality_state=capture_quality_state,guide_alignment_ideal=not bool(active_guide_advisories),
             advisories=advisories,advisory_guidance=advisory_guidance,recommended_adjustment=recommended_adjustment,
             quality_evidence=evidence,thresholds_status='provisional',production_validated=False,
-            acceptance_scope=('vnext_research_pending_manual_validation' if self.research is not None else
+            acceptance_scope=('capture_viewport_candidate' if self.capture_policy is not None else
                               'v4_3_fp2_1_targeted_policy_not_authenticity_or_ocr_guarantee')
         )

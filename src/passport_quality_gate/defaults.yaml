@@ -1,4 +1,4 @@
-# V4 context-aware provisional research thresholds; NOT OCR-calibrated.
+# Provisional capture-quality thresholds; not calibrated as OCR probabilities.
 normalization:
   preview_width: 480
   final_width: 960
@@ -25,7 +25,7 @@ geometry:
   # Legacy area thresholds retained for compatibility/debug only.
   min_fill: 0.65
   max_fill: 1.15
-  # V4 preview framing uses width/height independently, which is more actionable
+  # Preview framing uses width/height independently, which is more actionable
   # than a single area ratio.
   preview_min_fill_w: 0.78
   preview_min_fill_h: 0.72
@@ -43,7 +43,7 @@ geometry:
   # label READY vs OPTIMAL and to surface a recommended adjustment.
   guide_advisory_codes: [PASSPORT_TOO_FAR, PASSPORT_TOO_CLOSE, MOVE_LEFT, MOVE_RIGHT, MOVE_UP, MOVE_DOWN]
 completeness:
-  # V4.3 false-READY guard. These are deliberately broad TD3 geometry priors,
+  # Broad TD3 geometry priors for false-READY prevention;
   # not authenticity checks and not OCR calibration.  Guide mismatch remains
   # advisory; this gate only asks whether the full data page is plausibly present.
   enabled: true
@@ -97,7 +97,7 @@ glare:
   mrz_overlap_fail: 0.2
   critical_overlap_fail: 0.2
   enable_preview: true
-  # V4.3-FP2: the legacy mask is a broad highlight candidate detector.
+  # The broad highlight mask is a candidate detector.
   # Only OCR-destructive highlight evidence is allowed to drive GLARE blocking.
   impact_confirmation:
     enabled: true
@@ -187,7 +187,7 @@ policy:
     require_mrz: true
     require_text_evidence: true
     fallback_safe_border_margin: 0.0
-    # V4.2: guide-box composition is guidance, not a capture veto.
+    # Guide-box composition is guidance, not a capture veto.
     # Actual insufficiency is blocked by CROPPED / LOW_RESOLUTION / quality
     # evidence.  This lets an OCR-readable page be captured even when it is
     # not perfectly filling or centered in the ideal UI guide.
@@ -326,7 +326,7 @@ readability:
     # a lower (better) resolution severity remains capture-worthy with an
     # advisory, preserving the far-but-readable product policy.
     min_low_resolution_score: 0.50
-# Kept for old external configs; V4 policy.* is authoritative.
+# Compatibility aliases for older external configs; policy.* is authoritative.
 readiness:
   require_mrz: true
   require_corners: false

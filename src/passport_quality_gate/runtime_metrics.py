@@ -1,4 +1,4 @@
-"""Portable process memory metric for opt-in research tools."""
+"""Portable process memory helpers used by diagnostics and benchmarks."""
 
 
 def memory_mib():

@@ -1,7 +1,8 @@
-"""Opt-in VNext evidence. No OCR, model, persistence, or detector invocation.
+"""Capture-policy evidence and guidance for the capture-viewport pipeline.
 
-Scores are provisional severities, not calibrated probabilities. Side identities
-are in camera coordinates. MRZ priors are corroboration only, never a sole veto.
+This module operates only on localized geometry and image-quality evidence. It does
+not run OCR, persist images, or invoke the detector. Severity scores are policy
+signals, not probabilities.
 """
 from collections import deque
 from copy import deepcopy
@@ -10,7 +11,7 @@ from time import perf_counter
 import cv2
 import numpy as np
 
-from .geometry import box_quad, order_quad, rectify, overlap
+from .geometry import box_quad, order_quad
 from .quality import glare
 
 SIDES = ('top', 'right', 'bottom', 'left')
@@ -73,64 +74,21 @@ def boundary_evidence(frame, det, cfg):
     return out
 
 
-def fallback_mrz(frame, det, cfg):
-    """Two aligned text rows in the lower page; no recognized text is produced."""
-    crop, valid, _, matrix = rectify(frame, det, cfg['fallback_width'])
-    gray = cv2.cvtColor(crop, cv2.COLOR_BGR2GRAY)
-    y0 = int(gray.shape[0]*cfg['fallback_lower'])
-    roi = gray[y0:]
-    if min(roi.shape) < 8:
-        return {'score': 0., 'polygon': None, 'rows': 0}
-    blackhat = cv2.morphologyEx(roi, cv2.MORPH_BLACKHAT, cv2.getStructuringElement(cv2.MORPH_RECT, (19, 5)))
-    gradient = np.abs(cv2.Sobel(blackhat, cv2.CV_32F, 1, 0))
-    grad = np.uint8(np.clip(gradient/max(1., float(gradient.max()))*255, 0, 255))
-    _, mask = cv2.threshold(grad, 0, 255, cv2.THRESH_BINARY+cv2.THRESH_OTSU)
-    mask[valid[y0:]==0] = 0
-    # Remove page-border strokes before joining text, otherwise a vertical
-    # border can connect both MRZ rows into one tall component.
-    inset=max(2,int(roi.shape[1]*.025))
-    mask[:,:inset]=0; mask[:,-inset:]=0; mask[-3:]=0
-    joined = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, cv2.getStructuringElement(cv2.MORPH_RECT, (25, 3)))
-    contours = cv2.findContours(joined, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)[0]
-    rows = []
-    for contour in contours:
-        x,y,w,h = cv2.boundingRect(contour)
-        if w >= roi.shape[1]*cfg['fallback_min_width'] and 4 <= h <= roi.shape[0]*.5:
-            ink = float((blackhat[y:y+h,x:x+w]>20).mean())
-            if cfg['fallback_min_ink'] <= ink <= cfg['fallback_max_ink']:
-                rows.append((x,y,w,h,ink))
-    best = {'score': 0., 'polygon': None, 'rows': len(rows)}
-    for a in rows:
-        for b in rows:
-            if b[1] <= a[1]+a[3]:
-                continue
-            x=min(a[0],b[0]); y=a[1]; w=max(a[0]+a[2], b[0]+b[2])-x; h=b[1]+b[3]-y
-            aspect=w/max(1,h)
-            alignment=1-abs(a[0]-b[0])/max(a[2],b[2])
-            width_match=min(a[2],b[2])/max(a[2],b[2])
-            row_match=min(a[3],b[3])/max(a[3],b[3])
-            gap=(b[1]-a[1]-a[3])/max(a[3],b[3])
-            if not cfg['fallback_min_aspect'] <= aspect <= cfg['fallback_max_aspect'] or not .15 <= gap <= 2.5:
-                continue
-            score=float(alignment*width_match*row_match)
-            if score > best['score']:
-                poly=cv2.perspectiveTransform(box_quad([x,y+y0,x+w,y+h+y0])[None], np.linalg.inv(matrix))[0]
-                best=dict(score=score, polygon=poly.tolist(), rows=2, aspect=aspect, alignment=alignment, ink=[a[4],b[4]])
-    return best
-
-
-def prepare_detection(frame, det, cfg, min_conf):
-    """Current YOLO alone is authoritative. Classical candidates are telemetry."""
+def prepare_detection(det, min_conf):
+    """Apply the YOLO MRZ confidence threshold without secondary detectors."""
     det = deepcopy(det)
     present = bool(det.found and det.mrz_polygon is not None and det.mrz_confidence >= min_conf)
-    out = dict(state='STRONG' if present else 'ABSENT', credible=present,
-               current_yolo_present=present, yolo_confidence=float(det.mrz_confidence),
-               fallback=None, source='yolo' if present else 'none', held=False)
+    evidence = {
+        "state": "STRONG" if present else "ABSENT",
+        "credible": present,
+        "current_yolo_present": present,
+        "yolo_confidence": float(det.mrz_confidence),
+        "source": "yolo" if present else "none",
+        "held": False,
+    }
     if det.found and not present:
-        if cfg.get('fallback_telemetry', True):
-            out['fallback'] = fallback_mrz(frame, det, cfg)
         det.mrz_polygon = None
-    return det, out
+    return det, evidence
 
 
 def content_at_cut(frame, det, cfg):
@@ -199,7 +157,7 @@ def side_completeness(g, boundaries, mrz, top_content, expected_outside, cfg):
         inferred=float(expected_outside.get(side,0.))
         if cfg.get('capture_viewport'):
             # Paper-margin extrapolation plus proximity alone is not content
-            # loss. In V4 require independent observed shape/boundary support.
+            # loss. Require independent observed shape/boundary support.
             inferred*=max(shape,asym)
         layout=max(inferred, mrz_shape*proximity)
         cues=dict(frame_contact=contact, boundary_asymmetry=asym, layout=layout, page_shape=shape)
@@ -237,7 +195,7 @@ def expected_bounds(det, shape, cfg, credible):
     return out
 
 
-class ResearchSession:
+class CapturePolicySession:
     def __init__(self, cfg):
         self.cfg=cfg
         self.reset()
@@ -255,7 +213,7 @@ class ResearchSession:
         self.last_strong_motion=None
 
     def prepare(self, frame, det, min_conf, now, mode, *, page_reliable=True):
-        det, evidence=prepare_detection(frame,det,self.cfg,min_conf)
+        det, evidence = prepare_detection(det, min_conf)
         if not page_reliable:
             self.last_yolo_time=None
             self.last_text_evidence=False
@@ -289,7 +247,7 @@ class ResearchSession:
             jump=float(np.max(np.abs(page-self.last_yolo_page))/max(1.,np.linalg.norm(np.ptp(page,axis=0))))
             if 0 <= age <= self.cfg['mrz_miss_debounce_s'] and jump <= self.cfg['mrz_hold_geometry_jump']:
                 # Hold presence only; a stale rectangle cannot authorize new
-                # downstream MRZ diagnoses (V3 stage-aware addendum).
+                # downstream MRZ diagnoses.
                 evidence.update(state='HELD',credible=True,held=True,source='recent_yolo',held_age_s=age)
         return det,evidence
 
@@ -387,78 +345,27 @@ class ResearchSession:
         return dict(score=float(worst['score']), observed=True, worst_cell=worst, cells=cells,
                     temporal_reflection=temporal, candidate_metrics=metrics, roi_size=[width,height])
 
-    def guidance_for(self, default, active, scores, research, now, mode):
-        if research.get('page_reliable') is False:
-            self.guidance='PLACE_PASSPORT_IN_FRAME'
-            self.guidance_since=now
-            return dict(default,code='PLACE_PASSPORT_IN_FRAME',source_issue='PASSPORT_NOT_FOUND',severity=1.)
-        if self.cfg.get('capture_viewport'):
-            return self.viewport_guidance(default,active,scores,research,now,mode)
-        if research.get('mrz',{}).get('current_yolo_present') is False:
-            active=[c for c in active if c!='MRZ_GLARE']
-            scores=dict(scores,MRZ_GLARE=0.)
-            if default.get('source_issue')=='MRZ_GLARE' or default.get('code') in ('MRZ_GLARE','REDUCE_REFLECTION_ON_MRZ'):
-                default=dict(default,code='HOLD_STEADY' if research['mrz'].get('held') else 'SHOW_BOTTOM_TEXT')
-        candidates={}
-        cuts=research.get('cut_scores',{})
-        missing=[s for s,v in cuts.items() if v>=self.cfg['side_block']]
-        if missing and any(c in active for c in ('CROPPED','DOCUMENT_INCOMPLETE')):
-            code=ACTIONS[missing[0]] if len(missing)==1 else 'SHOW_ALL_EDGES'
-            candidates[code]=(3.,'DOCUMENT_INCOMPLETE')
-        mapping={'MRZ_GLARE':'TILT_TO_REMOVE_BOTTOM_REFLECTION','GLARE':'REDUCE_REFLECTION','TOO_DARK':'INCREASE_LIGHT',
-                 'TOO_BRIGHT':'REDUCE_DIRECT_LIGHT','HOLD_STEADY':'HOLD_STEADY','BLUR':'WAIT_FOR_FOCUS',
-                 'LOCALIZATION_UNCERTAIN':'CENTER_AND_HOLD','MRZ_NOT_FOUND':'SHOW_BOTTOM_TEXT',
-                 'LOW_RESOLUTION':'MOVE_CLOSER','PASSPORT_TOO_FAR':'MOVE_CLOSER',
-                 'QUALITY_UNCERTAIN':'HOLD_STEADY','CHECKING_STABILITY':'HOLD_STEADY'}
-        independent=any(v>=.85 for v in cuts.values()) or any(
-            side.get('content_at_cut',{}).get('score',0.)>=self.cfg['side_block']
-            for side in research.get('side_completeness',{}).values()) or any(float(scores.get(c) or 0.) >= threshold for c,threshold in
-                         [('MRZ_GLARE',.6),('GLARE',.6),('TOO_DARK',.85),('TOO_BRIGHT',.85)])
-        causal_motion=research.get('recent_strong_motion',False) and not independent and any(c in active for c in
-                      ('HOLD_STEADY','BLUR','MRZ_NOT_FOUND','LOCALIZATION_UNCERTAIN','QUALITY_UNCERTAIN','PASSPORT_NOT_FOUND'))
-        if causal_motion:
-            candidates['HOLD_STEADY']=(6.,'HOLD_STEADY')
-        for issue in active:
-            if issue=='MRZ_GLARE' and research.get('mrz',{}).get('current_yolo_present') is False:
-                continue
-            if issue=='QUALITY_UNCERTAIN' and any(c!='QUALITY_UNCERTAIN' for c in active):
-                continue
-            if issue in ('CROPPED','DOCUMENT_INCOMPLETE') and missing:
-                continue
-            code=mapping.get(issue, issue)
-            if issue=='BLUR' and research.get('motion_score',0.) >= .3:
-                code='HOLD_STEADY'
-            base=3. if issue=='MRZ_GLARE' else (2.2 if issue in ('TOO_DARK','TOO_BRIGHT') else
-                   (2. if issue in ('GLARE','HOLD_STEADY','MRZ_NOT_FOUND') else 1.))
-            rank=base+float(scores.get(issue) or 0.)
-            if issue=='PASSPORT_NOT_FOUND': rank=5.
-            if code not in candidates or rank>candidates[code][0]:
-                candidates[code]=(rank,issue)
-        if not candidates:
-            self.guidance=None
-            code=mapping.get(default.get('code'),default.get('code'))
-            if mode=='final' and default.get('source_issue') is None:
-                code='READY'
-            return dict(default,code=code)
-        chosen=max(candidates,key=lambda code:candidates[code][0])
-        # Never preserve recovered causes, or hide a new critical instruction.
-        if mode=='preview' and self.guidance in candidates and now-self.guidance_since<self.cfg['guidance_min_s']:
-            if candidates[chosen][0]<candidates[self.guidance][0]+self.cfg['guidance_switch_margin']:
-                chosen=self.guidance
-        if chosen!=self.guidance:
-            self.guidance=chosen; self.guidance_since=now
-        source=candidates[chosen][1]
-        return dict(default,code=chosen,source_issue=source,severity=scores.get(source))
+    def guidance_for(self, default, active, scores, diagnostics, now, mode):
+        if diagnostics.get("page_reliable") is False:
+            self.guidance = "PLACE_PASSPORT_IN_FRAME"
+            self.guidance_since = now
+            return dict(
+                default,
+                code="PLACE_PASSPORT_IN_FRAME",
+                source_issue="PASSPORT_NOT_FOUND",
+                severity=1.0,
+            )
+        return self._viewport_guidance(default, active, scores, diagnostics, now, mode)
 
-    def viewport_guidance(self, default, active, scores, research, now, mode):
-        mrz=research.get('mrz',{})
-        cuts=research.get('cut_scores',{})
+    def _viewport_guidance(self, default, active, scores, diagnostics, now, mode):
+        mrz=diagnostics.get('mrz',{})
+        cuts=diagnostics.get('cut_scores',{})
         missing=[s for s,v in cuts.items() if v>=self.cfg['side_block']]
         source=None
         if missing:
             code=ACTIONS[missing[0]] if len(missing)==1 else 'SHOW_ALL_EDGES'
             source='DOCUMENT_INCOMPLETE'
-        elif research.get('recent_strong_motion') and any(c in active for c in
+        elif diagnostics.get('recent_strong_motion') and any(c in active for c in
                 ('HOLD_STEADY','MRZ_NOT_FOUND','QUALITY_UNCERTAIN','BLUR','LOCALIZATION_UNCERTAIN')):
             # Causal exception: sudden missing text under strong motion.
             code='HOLD_STEADY'; source='HOLD_STEADY'

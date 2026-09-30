@@ -8,7 +8,7 @@ from passport_quality_gate.viewport import CaptureViewport, map_preview_viewport
 from passport_quality_gate.localization import Detection
 from passport_quality_gate.synthetic import sample
 
-V4='configs/research_v4.yaml'
+V4='configs/capture_viewport.yaml'
 
 class RecordingLocalizer:
     def __init__(self, det=None): self.det=det or Detection(); self.frames=[]
@@ -25,7 +25,7 @@ def replay_frames():
     return frames,CaptureViewport(100/shape[1],80/shape[0],w/shape[1],h/shape[0]),det
 
 def semantic(result):
-    return {k:result[k] for k in ('localization','quality','state','guidance_code','blocking_issues','research','quality_evidence')}
+    return {k:result[k] for k in ('localization','quality','state','guidance_code','blocking_issues','capture_diagnostics','quality_evidence')}
 
 @pytest.mark.parametrize('mode',['preview','final'])
 def test_image_replay_outside_pixels_never_enter_localizer_or_change_outputs(mode):
@@ -60,15 +60,14 @@ def test_round_inward_clamp_and_reject_empty():
     assert CaptureViewport(-.1,-.1,1.2,1.2).pixel_rect((100,100,3))==(0,0,100,100)
     with pytest.raises(ValueError): CaptureViewport(2,2,.2,.2).pixel_rect((100,100,3))
 
-@pytest.mark.parametrize('config',[None,'configs/research_vnext.yaml'])
-def test_old_profiles_do_not_silently_adopt_viewport(config):
-    gate=PassportQualityGate(config=config,localizer=RecordingLocalizer())
+def test_default_profile_does_not_silently_adopt_viewport():
+    gate=PassportQualityGate(config=None,localizer=RecordingLocalizer())
     with pytest.raises(ValueError): gate.analyze_roi_preview(np.zeros((100,100,3),np.uint8))
 
 from passport_quality_gate.config import load_config
 from passport_quality_gate.geometry import box_quad
 from passport_quality_gate.motion import MotionAnalyzer
-from passport_quality_gate.research import ResearchSession, content_at_cut
+from passport_quality_gate.capture_policy import CapturePolicySession, content_at_cut
 from passport_quality_gate.frame_selector import BestFrameSelector
 from passport_quality_gate.capture_output import extract_passport_page
 
@@ -83,8 +82,8 @@ def test_partial_mrz_is_blocked_directionally_without_quality_diagnosis(side,act
     r=gate.analyze_roi_final(image,timestamp=0.)
     assert r['state']=='RETAKE'
     assert r['guidance_code']==action
-    assert r['research']['mrz']['state']=='INCOMPLETE'
-    assert not r['research']['mrz_glare']['observed']
+    assert r['capture_diagnostics']['mrz']['state']=='INCOMPLETE'
+    assert not r['capture_diagnostics']['mrz_glare']['observed']
     assert r['localization']['mrz_polygon'] is None
 
 
@@ -93,7 +92,6 @@ def test_implausibly_short_detected_mrz_blocks_without_fallback():
     r=PassportQualityGate(config=V4,localizer=RecordingLocalizer(det)).analyze_roi_final(image)
     assert r['state']=='RETAKE'
     assert r['guidance_code']=='SHOW_BOTTOM_TEXT'
-    assert r['research']['mrz']['fallback'] is None
 
 @pytest.mark.parametrize('side,action',[('left','MOVE_RIGHT'),('right','MOVE_LEFT'),('top','MOVE_DOWN'),('bottom','MOVE_UP')])
 def test_actual_roi_content_cut_beats_low_resolution(side,action):
@@ -109,9 +107,9 @@ def test_actual_roi_content_cut_beats_low_resolution(side,action):
     gate=PassportQualityGate(config=V4,localizer=RecordingLocalizer(det))
     r=gate.analyze_capture_final(frame,viewport)
     assert r['state']=='RETAKE'
-    assert r['research']['cut_scores'][side]>=.55
+    assert r['capture_diagnostics']['cut_scores'][side]>=.55
     assert r['guidance_code']==action
-    session=ResearchSession(load_config(V4)['research'])
+    session=CapturePolicySession(load_config(V4)['capture_policy'])
     r=session.guidance_for({},['DOCUMENT_INCOMPLETE','LOW_RESOLUTION'],
         {'DOCUMENT_INCOMPLETE':.6,'LOW_RESOLUTION':1.},
         {'page_reliable':True,'cut_scores':{side:.6}},0.,'preview')
@@ -168,7 +166,7 @@ def test_viewport_change_invalidates_debounce_even_at_same_roi_size():
     loc.det.mrz_polygon=None;loc.det.mrz_confidence=0.
     changed=CaptureViewport(v.x+.01,v.y,v.w,v.h)
     r=gate.analyze_capture_preview(frames[0],changed,timestamp=.1)
-    assert not r['research']['mrz']['held']
+    assert not r['capture_diagnostics']['mrz']['held']
     assert not r['capture_allowed']
 
 
@@ -179,7 +177,7 @@ def test_v4_missing_current_mrz_only_debounces_presence():
     loc.det.mrz_polygon=None;loc.det.mrz_confidence=0.
     r=gate.analyze_roi_preview(image,timestamp=2.)
     assert r['capture_allowed']
-    assert not r['research']['mrz_glare']['observed']
+    assert not r['capture_diagnostics']['mrz_glare']['observed']
     r=gate.analyze_roi_preview(image,timestamp=2.3)
     assert not r['capture_allowed']
     assert r['guidance_code']=='SHOW_BOTTOM_TEXT'
@@ -216,7 +214,7 @@ def test_packaged_yolo_raw_mrz_outside_viewport_never_rescues(real_gate):
     for t in [0.,.2,.4,.6,1.]:
         r=real_gate.analyze_capture_preview(image,viewport,timestamp=t)
         assert not r['capture_allowed']
-        assert r['research']['mrz']['state']=='ABSENT'
+        assert r['capture_diagnostics']['mrz']['state']=='ABSENT'
     r=real_gate.analyze_capture_final(image,viewport)
     assert r['state']=='RETAKE'
     assert r['guidance_code']=='SHOW_BOTTOM_TEXT'
@@ -254,16 +252,3 @@ def test_relative_motion_same_at_double_camera_resolution():
             seq.append(motion.update(Detection(p,None,1.),(600*factor,900*factor,3),i*.1)['score'])
         sequences.append(seq)
     assert sequences[0]==pytest.approx(sequences[1])
-
-
-def test_fallback_telemetry_toggle_has_zero_v4_authority():
-    image,det,_=sample();det.mrz_polygon=None;det.mrz_confidence=0.
-    results=[]
-    for enabled in [False,True]:
-        config=load_config(V4);config['research']['fallback_telemetry']=enabled
-        gate=PassportQualityGate(config=config,localizer=RecordingLocalizer(det))
-        r=gate.analyze_roi_final(image)
-        results.append([r[k] for k in ['state','guidance_code','quality','blocking_issues']])
-        assert not r['capture_allowed']
-        assert all(v==0 for v in r['research']['expected_outside'].values())
-    assert results[0]==results[1]

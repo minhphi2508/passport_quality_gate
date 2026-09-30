@@ -17,7 +17,7 @@ SOURCE_ZIP = DIST / f'passport_quality_gate_sdk_v{VERSION}.zip'
 INCLUDE_DIRS = ['src/passport_quality_gate', 'configs', 'models', 'examples', 'docs', 'tests']
 INCLUDE_FILES = [
     'README.md', 'VERSION', 'CHANGELOG.md', 'pyproject.toml', 'GOLDEN_CORE_SHA256.json',
-    'requirements.txt', 'requirements-detector.txt', 'requirements-tested.txt', 'requirements-advanced.txt',
+    'requirements.txt',
     'tools/verify_golden_core.py', 'tools/build_sdk_package.py', 'tools/acceptance_check.py',
 ]
 EXCLUDE_PARTS = {'__pycache__', '.pytest_cache', 'passport_quality_gate.egg-info', 'archive', 'outputs', '.venv', 'dist'}

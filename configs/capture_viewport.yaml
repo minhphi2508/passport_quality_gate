@@ -1,10 +1,14 @@
-# Explicit opt-in. Omitted profile preserves FP2-GOLDEN-ACTUAL behavior.
-research:
+# Capture-viewport policy overrides.
+capture_policy:
   enabled: true
-  profile: VNEXT-CORRECTIVE-V3
+  capture_viewport: true
+  mrz_edge_px: 1.0
+  mrz_min_width_ratio: 0.58
+  mrz_min_aspect: 5.3
+  mrz_min_center_y: 0.60
+  profile: V4-CAPTURE-VIEWPORT
   mrz_miss_debounce_s: 0.4
   mrz_hold_geometry_jump: 0.12
-  fallback_telemetry: true
   guidance_strong_motion: 0.8
   guidance_motion_memory_s: 0.6
   cut_strip_fraction: 0.045
@@ -41,14 +45,6 @@ research:
   side_block: 0.55
   top_substantial: 0.16
   top_ink_fraction: 0.035
-  fallback_width: 600
-  fallback_lower: 0.68
-  fallback_min_width: 0.58
-  fallback_min_aspect: 6.0
-  fallback_max_aspect: 18.0
-  fallback_min_ink: 0.045
-  fallback_max_ink: 0.80
-  fallback_strong: 0.75
   mrz_width: 800
   mrz_cells: 22
   cell_candidate_soft: 0.12
@@ -64,3 +60,11 @@ research:
 decision:
   thresholds:
     CROPPED: {enter: 0.55, exit: 0.35}
+
+motion:
+  normalization: page_relative
+  # Convert existing units using reference page diagonal 0.80 of frame.
+  center_deadzone: 0.0125
+  scale_deadzone: 0.024
+  speed_good: 0.125
+  speed_bad: 0.50

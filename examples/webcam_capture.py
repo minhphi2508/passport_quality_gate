@@ -1,10 +1,11 @@
-"""Opt-in research harness. D debug, C best ROI, F current ROI, R reset, Q quit.
+"""Reference capture-viewport webcam integration.
 
-Metrics only unless --record-images is explicitly supplied. Preview inference
-is throttled independently of camera display. Final always uses selected pixels.
+D toggles diagnostics, C captures the best recent ROI, F final-checks the
+current ROI, R resets the session, and Q exits. Images are not written unless
+--record-images is supplied.
 """
 from concurrent.futures import ThreadPoolExecutor
-from passport_quality_gate.research import guidance_text
+from passport_quality_gate.capture_policy import guidance_text
 from passport_quality_gate.viewport import CaptureViewport, orient_camera
 import argparse
 import json
@@ -32,7 +33,7 @@ def main():
     args = parser.parse_args()
     if args.analysis_fps <= 0:
         parser.error('--analysis-fps must be positive')
-    config = Path(__file__).resolve().parents[1] / 'configs/research_v4.yaml'
+    config = Path(__file__).resolve().parents[1] / 'configs/capture_viewport.yaml'
     viewport = CaptureViewport(*args.viewport)
     start = perf_counter()
     gate = PassportQualityGate(device=args.device, config=config)
@@ -73,7 +74,7 @@ def main():
         if previous:
             flips += previous['capture_allowed'] != latest['capture_allowed']
             guidance_flips += previous['guidance_code'] != latest['guidance_code']
-        latest['research_ready_exit'] = {
+        latest['ready_exit_diagnostics'] = {
             'exited': bool(previous and previous['capture_allowed'] and not latest['capture_allowed']),
             'blocking_issues': latest['blocking_issues'],
             'motion': latest['raw_metrics'].get('motion'),
@@ -119,13 +120,13 @@ def main():
                             cv2.polylines(display,[(np.asarray(polygon)+offset).astype(np.int32)],True,color_poly,2)
                     lines += [f"ROI {viewport_meta['viewport_pixel_rect']} size {roi.shape[1]}x{roi.shape[0]}",
                               f"motion {latest['raw_metrics'].get('motion')}"]
-                    lines += [f"V4: {latest['state']} | {latest['guidance_code']}"]
+                    lines += [f"{latest['state']} | {latest['guidance_code']}"]
                     lines += [f"block: {latest['blocking_issues']}", f"timing: {latest['timing_ms']['total']:.1f} ms"]
-                    research = latest.get('research', {})
-                    lines += [f"cuts: {research.get('cut_scores', {})}", f"MRZ: {research.get('mrz', {}).get('state')} glare: {latest['quality'].get('mrz_glare_score')}"]
+                    diagnostics = latest.get('capture_diagnostics', {})
+                    lines += [f"cuts: {diagnostics.get('cut_scores', {})}", f"MRZ: {diagnostics.get('mrz', {}).get('state')} glare: {latest['quality'].get('mrz_glare_score')}"]
                 for i, line in enumerate(lines):
                     cv2.putText(display, line, (12, 28+25*i), cv2.FONT_HERSHEY_SIMPLEX, .55, color, 2)
-            cv2.imshow('Passport V4 capture viewport', display)
+            cv2.imshow('Passport capture viewport', display)
             key = cv2.waitKey(1) & 255
             if key == ord('q'):
                 break
