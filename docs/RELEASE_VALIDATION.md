@@ -1,89 +1,24 @@
-# Release Validation — SDK 0.1.3
+# Release Validation — v0.1.4
 
-## Release identity
+## Accepted behavior
 
-```text
-SDK: 0.1.3
-Quality policy: FP2-GOLDEN-ACTUAL
-Git tag: v0.1.3
-```
+The V4 capture-viewport candidate completed manual camera acceptance by the model owner before release preparation. After the cleanup pass, the owner also completed the requested smoke re-check on the same Python 3.12 development environment and reported completion without a new behavior issue.
 
-## Confirmed project-level status
+No quality thresholds or decision policy were intentionally changed during release preparation. Release-prep changes are packaging, API-profile resolution, documentation, asset de-duplication and release verification.
 
-- Golden quality policy intentionally unchanged from FP2.
-- v0.1.3 includes public final-result alias correction.
-- v0.1.3 isolates final analyzer state from preview temporal state.
-- BestFrameSelector validates finite/monotonic timestamps.
-- Mapping-style config input is normalized at the public wrapper boundary.
-- Recent-best-frame selection remains bounded and RAM-only.
-- Accepted selected frames can be converted to a perspective-corrected passport-page crop for OCR handoff.
-- Manual local webcam inspection confirmed the new passport-page crops were visually correct on the tested samples.
-- Crop/glare/completeness limitations remain documented; no new Golden quality policy is claimed.
+## Release-prep checks in this build environment
 
-## Required pre-handoff checks
+- `python tools/verify_release_core.py`: PASS (28-file release fingerprint)
+- `python -m compileall -q src examples tools tests`: PASS
+- `git diff --check`: PASS
+- regression subset: 164 passed, 1 skipped, 3 deliberately deselected
+- wheel build: PASS
+- wheel installed from the generated artifact with `--no-deps`: PASS
+- packaged `capture_viewport.yaml`, `defaults.yaml` and detector weights: present
+- installed runtime metadata: `0.1.4` / `V4-CAPTURE-VIEWPORT`
 
-Run from the v0.1.3 source tree:
+The three deselected checks are environment-specific here: two require Ultralytics, which is not installed in this container, and one synthetic MRZ-glare assertion has the previously observed OpenCV/environment discrepancy. They are not silently converted into passes; the model owner's Python 3.12 environment is the acceptance environment for the complete suite and camera behavior.
 
-```bash
-python tools/verify_golden_core.py
-python -m pytest -q
-python examples/runtime_check.py
-python tools/build_sdk_package.py
-```
+## Scope
 
-Expected Golden verification:
-
-```text
-Golden core OK: 13 files match FP2-GOLDEN-ACTUAL
-```
-
-Record the actual pytest result from the handoff machine rather than copying an old test count.
-
-## Fresh-environment wheel acceptance
-
-Create a fresh virtual environment outside the source tree, then install only the generated wheel.
-
-For target GPU/CUDA environments, install the appropriate PyTorch build first.
-
-Run:
-
-```bash
-python tools/acceptance_check.py
-```
-
-or, from the source/handoff bundle:
-
-```bash
-python tools/acceptance_check.py --image <test_passport_image>
-```
-
-Confirm:
-
-- import resolves from the fresh environment's `site-packages`
-- `runtime_info()` reports SDK `0.1.3`
-- quality policy is `FP2-GOLDEN-ACTUAL`
-- selector smoke passes
-- optional image preview/final call executes
-- source repository is not required at runtime
-- packaged config/model assets are present
-
-## Release artifacts
-
-The build script should create:
-
-```text
-dist/
-├── passport_quality_gate_sdk_v0.1.3.zip
-├── passport_quality_gate-0.1.3-*.whl
-└── SHA256SUMS.txt
-```
-
-Send all three together.
-
-## Production-validation claim
-
-```text
-NO
-```
-
-The release is suitable for manager/dev integration review. It is not yet evidence of broad production validation across all target mobile devices, passport variants, lighting conditions, or downstream OCR outcomes.
+`production_validated` remains `False`. The release is an integration candidate. It does not claim broad target-device/passport-population validation, document authenticity, or guaranteed OCR correctness.

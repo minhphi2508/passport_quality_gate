@@ -1,0 +1,38 @@
+{
+  "description": "Generated invalid document proxy; no real personal data. Raw frame 1024x768.",
+  "cases": [
+    {
+      "name": "full_inside",
+      "viewport": [
+        0.16,
+        0.18,
+        0.68,
+        0.64
+      ]
+    },
+    {
+      "name": "bottom_text_outside",
+      "viewport": [
+        0.16,
+        0.18,
+        0.68,
+        0.44
+      ]
+    },
+    {
+      "name": "page_outside",
+      "viewport": [
+        0,
+        0,
+        0.16,
+        1
+      ]
+    }
+  ],
+  "outside_controls": [
+    "black",
+    "white_glare",
+    "seeded_noise",
+    "proxy_text"
+  ]
+}

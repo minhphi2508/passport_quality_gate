@@ -1,14 +1,14 @@
-# Release checklist
+# Release Checklist — v0.1.4
 
-Before handing a build to another team:
-
-1. `python tools/verify_golden_core.py`
+1. `python tools/verify_release_core.py`
 2. `python -m pytest -q`
-3. `python examples/runtime_check.py`
-4. `python tools/build_sdk_package.py`
-5. In a **new virtual environment**, install only the generated wheel (preinstall target-specific PyTorch first only when GPU/CUDA selection requires it).
-6. Run `python tools/acceptance_check.py` from the source/handoff bundle, optionally with `--image <passport_test_image>`.
-7. Confirm the installed package path points to the new environment's `site-packages` and the test still runs when the source repo is unavailable.
-8. Verify generated SHA256 files.
-9. Keep `FP2-GOLDEN-ACTUAL` known limitations attached to the release.
-10. Do not modify/freeze new hashes merely to hide a Golden-core mismatch.
+3. `python -m compileall -q src examples tools tests`
+4. `git diff --check`
+5. Confirm manual camera acceptance on the release candidate.
+6. `python tools/build_sdk_package.py`
+7. Verify `SHA256SUMS.txt`.
+8. Inspect the wheel for detector weights, `defaults.yaml`, and `capture_viewport.yaml`.
+9. Install the wheel once in an isolated acceptance environment and run `tools/acceptance_check.py`.
+10. Merge the release-prep branch to `main`, then tag `v0.1.4`.
+
+The historical FP2 Golden manifest remains in Git history. Do not recreate or rewrite it to disguise V4 changes.

@@ -1,10 +1,7 @@
-# Deployment Notes
+# Deployment Notes — SDK 0.1.4
 
-The reference package is deployment-neutral.
+The Python package is a reference runtime. `device="auto"` uses CUDA when the installed PyTorch reports CUDA available, otherwise CPU.
 
-- `device="auto"`: CUDA if PyTorch reports CUDA available, otherwise CPU.
-- explicit device values supported by the underlying YOLO runtime may be supplied.
-- camera resolution, camera API, preview FPS and shutter implementation are owned by the host application.
-- choose/install the PyTorch build appropriate for the target environment rather than hard-coding the laptop CPU environment.
+The host owns camera API, preview FPS/resolution, threading around the camera loop, mobile wrappers, networking/storage and target-device optimization. Potential ONNX/TensorRT/CoreML/TFLite work is a later deployment phase and is not part of this release.
 
-Potential later targets include server GPU inference, ONNX/TensorRT, or mobile-specific runtimes. Those are deployment phases, not assumptions of SDK 0.1.0.
+Profile the complete app on target hardware; the SDK does not claim a universal FPS/thermal budget.

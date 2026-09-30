@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from copy import deepcopy
 from typing import Any, Mapping, Optional, Union
 
 import numpy as np
@@ -12,7 +13,7 @@ from .types import GuideBoxLike, coerce_guide_box
 
 
 QUALITY_POLICY = "FP2-GOLDEN-ACTUAL"
-SDK_CANDIDATE_VERSION = "0.1.3"
+SDK_CANDIDATE_VERSION = "0.1.4"
 
 
 def _project_root() -> Path:
@@ -25,26 +26,26 @@ def _package_assets() -> Path:
 
 
 def _default_config_path() -> Path:
-    # Prefer the auditable source-tree Golden file when present. Fall back to
-    # package assets so a wheel/install does not depend on repository layout.
-    source = _project_root() / "configs" / "thresholds_v4.yaml"
-    if source.is_file():
-        return source
-    packaged = _package_assets() / "thresholds_v4.yaml"
+    return Path(__file__).resolve().with_name("defaults.yaml")
+
+def _capture_viewport_config_path() -> Path:
+    packaged = _package_assets() / "capture_viewport.yaml"
     if packaged.is_file():
         return packaged
-    raise FileNotFoundError("Default thresholds_v4.yaml not found in source tree or package assets")
+    raise FileNotFoundError("Packaged capture_viewport profile not found")
 
+def _resolve_config_source(config: Optional[Union[str, Path, Mapping[str, Any]]]):
+    if config is None:
+        return _default_config_path()
+    if isinstance(config, str) and config in {"capture_viewport", "v4"}:
+        return _capture_viewport_config_path()
+    return config
 
 def _default_weights_path() -> Path:
-    source = _project_root() / "models" / "passport_detector_ver3_best.pt"
-    if source.is_file():
-        return source
     packaged = _package_assets() / "passport_detector_ver3_best.pt"
     if packaged.is_file():
         return packaged
-    raise FileNotFoundError("Default passport detector weights not found in source tree or package assets")
-
+    raise FileNotFoundError("Packaged passport detector weights not found")
 
 def _resolve_device(device: Union[str, int]) -> Union[str, int]:
     """Resolve 'auto' without imposing a deployment architecture on callers."""
@@ -65,8 +66,7 @@ def _resolve_device(device: Union[str, int]) -> Union[str, int]:
 def _normalize_final_result(result: Mapping[str, Any]) -> dict[str, Any]:
     """Repair final output aliases without changing the frozen decision.
 
-    Raw Analyzer remains immutable. Only its final ACCEPT/RETAKE aliases need
-    normalization; preview readiness still belongs entirely to Golden.
+    Normalize shared ACCEPT/RETAKE aliases across capture profiles.
     """
     out = dict(result)
     if out.get("mode") == "final" and out.get("state") in {"ACCEPT", "RETAKE"}:
@@ -83,13 +83,13 @@ def _normalize_final_result(result: Mapping[str, Any]) -> dict[str, Any]:
 def to_public_result(result: Mapping[str, Any]) -> dict[str, Any]:
     """Return the small JSON-ready contract intended for app/server consumers.
 
-    The frozen engine emits many research diagnostics. Those remain available
-    from analyze_*(), but only this compact field set is treated as the stable
-    external contract for SDK 0.1.x.
+    Detailed diagnostics remain available from analyze_*(), while this compact
+    field set is the external integration contract.
     """
     result = _normalize_final_result(result)
     timing = result.get("timing_ms") or {}
     return {
+        **({"guidance_text": result["guidance_text"]} if "guidance_text" in result else {}),
         "capture_allowed": bool(result.get("capture_allowed")),
         "capture_quality_state": result.get("capture_quality_state"),
         "workflow_state": result.get("workflow_state"),
@@ -104,7 +104,7 @@ def to_public_result(result: Mapping[str, Any]) -> dict[str, Any]:
 
 
 class PassportQualityGate:
-    """Stable integration wrapper around the frozen FP2 Golden engine.
+    """Passport capture-quality integration wrapper.
 
     This class does not open a camera, render UI, save images, or create logs.
     One instance should be used per live preview stream because FP2 preview
@@ -123,7 +123,7 @@ class PassportQualityGate:
         localizer: Any = None,
     ) -> None:
         config_source: Union[str, Path, Mapping[str, Any]]
-        config_source = _default_config_path() if config is None else config
+        config_source = _resolve_config_source(config)
         # The public signature accepts any Mapping; the frozen loader accepts
         # dict specifically. Convert at this boundary, retaining its deep copy.
         self.config = load_config(dict(config_source) if isinstance(config_source, Mapping) else config_source)
@@ -147,7 +147,7 @@ class PassportQualityGate:
     def metadata(self) -> dict[str, Any]:
         return {
             "sdk_candidate_version": SDK_CANDIDATE_VERSION,
-            "quality_policy": QUALITY_POLICY,
+            "quality_policy": self.config["capture_policy"]["profile"] if self.config.get("capture_policy", {}).get("enabled", False) else QUALITY_POLICY,
             "device": self.device,
             "production_validated": False,
         }
@@ -212,8 +212,40 @@ class PassportQualityGate:
             capture_context="document_crop",
         ))
 
-    # Convenience methods for consumers that only want the documented stable
-    # contract and do not need research diagnostics from the Golden engine.
+    def _require_viewport_profile(self):
+        if not self.config.get('capture_policy',{}).get('capture_viewport',False):
+            raise ValueError("Explicit ROI methods require config='capture_viewport'")
+
+    def analyze_roi_preview(self, roi, *, timestamp=None, viewport_metadata=None):
+        """Preferred V4 API: input consists ONLY of product-visible ROI pixels."""
+        self._require_viewport_profile()
+        # A changed physical viewport or ROI resolution starts fresh evidence.
+        key=(tuple(roi.shape),repr(viewport_metadata))
+        if getattr(self,'_viewport_key',key)!=key: self.reset()
+        self._viewport_key=key
+        result=self.analyze_preview(roi,(0.,0.,1.,1.),timestamp=timestamp)
+        result['capture_viewport']=deepcopy(viewport_metadata) or {'analysis_frame_size':result['frame_size'],'input':'roi_pixels'}
+        return result
+
+    def analyze_roi_final(self, roi, *, timestamp=None, viewport_metadata=None):
+        """Final-check the selected ROI itself, without recropping or resizing."""
+        self._require_viewport_profile()
+        result=self.analyze_final(roi,(0.,0.,1.,1.),timestamp=timestamp)
+        result['capture_viewport']=deepcopy(viewport_metadata) or {'analysis_frame_size':result['frame_size'],'input':'roi_pixels'}
+        return result
+
+    def analyze_capture_preview(self, frame, capture_viewport, *, timestamp=None, preview_transform=None):
+        """Convenience V4 path; explicitly crop BEFORE localization/analysis."""
+        self._require_viewport_profile()
+        roi,meta=capture_viewport.extract(frame,transform=preview_transform)
+        return self.analyze_roi_preview(roi,timestamp=timestamp,viewport_metadata=meta)
+
+    def analyze_capture_final(self, frame, capture_viewport, *, timestamp=None, preview_transform=None):
+        self._require_viewport_profile()
+        roi,meta=capture_viewport.extract(frame,transform=preview_transform)
+        return self.analyze_roi_final(roi,timestamp=timestamp,viewport_metadata=meta)
+
+    # Compact result helpers for app/server integrations.
     def analyze_preview_public(self, frame: np.ndarray, guide_box: GuideBoxLike, *, timestamp: Optional[float] = None) -> dict[str, Any]:
         return to_public_result(self.analyze_preview(frame, guide_box, timestamp=timestamp))
 

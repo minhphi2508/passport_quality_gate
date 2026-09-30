@@ -1,12 +1,10 @@
-# Known Limitations — FP2-GOLDEN-ACTUAL
+# Known Limitations — V4 Capture Viewport
 
-The current policy is frozen because it has the best validated behavior from the present research cycle, not because it is perfect.
-
-- partial document truncation can occasionally pass readiness checks;
-- corner localization can be unreliable under some backgrounds/viewing conditions;
-- MRZ glare can occasionally be under-detected;
-- strong motion can cause READY / NOT_READY temporal fluctuation;
-- thresholds are not calibrated against a large real-world passport/OCR-success dataset;
-- current validation does not establish document authenticity or guarantee downstream OCR correctness.
-
-These limitations are deliberately documented rather than hidden by additional unvalidated heuristics.
+- The SDK assumes the host supplies the correct product-visible ROI; incorrect UI-to-camera mapping invalidates geometry/completeness reasoning.
+- Detector/corner reliability can degrade under extreme blur, rotation, perspective, occlusion or unusual backgrounds.
+- Quality thresholds are not calibrated against a large OCR-linked real-world passport/device dataset.
+- Small destructive glare or borderline partial truncation can still be imperfectly classified.
+- Best-frame selection improves shutter-time robustness but does not guarantee the best downstream OCR result.
+- The SDK does not verify authenticity and does not guarantee OCR correctness.
+- Broad target-device latency, thermal and battery validation remains application/deployment work.
+- Previously cropped digital passport images are outside the physical live-camera truncation guarantee unless separately validated as a supported input.
