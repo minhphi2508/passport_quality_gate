@@ -13,7 +13,7 @@ from .types import GuideBoxLike, coerce_guide_box
 
 
 QUALITY_POLICY = "FP2-GOLDEN-ACTUAL"
-SDK_CANDIDATE_VERSION = "0.1.3"
+SDK_CANDIDATE_VERSION = "0.1.4"
 
 
 def _project_root() -> Path:
@@ -26,26 +26,26 @@ def _package_assets() -> Path:
 
 
 def _default_config_path() -> Path:
-    # Prefer the auditable source-tree Golden file when present. Fall back to
-    # package assets so a wheel/install does not depend on repository layout.
-    source = _project_root() / "configs" / "thresholds_v4.yaml"
-    if source.is_file():
-        return source
-    packaged = _package_assets() / "thresholds_v4.yaml"
+    return Path(__file__).resolve().with_name("defaults.yaml")
+
+def _capture_viewport_config_path() -> Path:
+    packaged = _package_assets() / "capture_viewport.yaml"
     if packaged.is_file():
         return packaged
-    raise FileNotFoundError("Default thresholds_v4.yaml not found in source tree or package assets")
+    raise FileNotFoundError("Packaged capture_viewport profile not found")
 
+def _resolve_config_source(config: Optional[Union[str, Path, Mapping[str, Any]]]):
+    if config is None:
+        return _default_config_path()
+    if isinstance(config, str) and config in {"capture_viewport", "v4"}:
+        return _capture_viewport_config_path()
+    return config
 
 def _default_weights_path() -> Path:
-    source = _project_root() / "models" / "passport_detector_ver3_best.pt"
-    if source.is_file():
-        return source
     packaged = _package_assets() / "passport_detector_ver3_best.pt"
     if packaged.is_file():
         return packaged
-    raise FileNotFoundError("Default passport detector weights not found in source tree or package assets")
-
+    raise FileNotFoundError("Packaged passport detector weights not found")
 
 def _resolve_device(device: Union[str, int]) -> Union[str, int]:
     """Resolve 'auto' without imposing a deployment architecture on callers."""
@@ -123,7 +123,7 @@ class PassportQualityGate:
         localizer: Any = None,
     ) -> None:
         config_source: Union[str, Path, Mapping[str, Any]]
-        config_source = _default_config_path() if config is None else config
+        config_source = _resolve_config_source(config)
         # The public signature accepts any Mapping; the frozen loader accepts
         # dict specifically. Convert at this boundary, retaining its deep copy.
         self.config = load_config(dict(config_source) if isinstance(config_source, Mapping) else config_source)
@@ -214,7 +214,7 @@ class PassportQualityGate:
 
     def _require_viewport_profile(self):
         if not self.config.get('capture_policy',{}).get('capture_viewport',False):
-            raise ValueError('Explicit ROI methods require configs/capture_viewport.yaml')
+            raise ValueError("Explicit ROI methods require config='capture_viewport'")
 
     def analyze_roi_preview(self, roi, *, timestamp=None, viewport_metadata=None):
         """Preferred V4 API: input consists ONLY of product-visible ROI pixels."""

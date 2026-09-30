@@ -1,0 +1,70 @@
+# Capture-viewport policy overrides.
+capture_policy:
+  enabled: true
+  capture_viewport: true
+  mrz_edge_px: 1.0
+  mrz_min_width_ratio: 0.58
+  mrz_min_aspect: 5.3
+  mrz_min_center_y: 0.60
+  profile: V4-CAPTURE-VIEWPORT
+  mrz_miss_debounce_s: 0.4
+  mrz_hold_geometry_jump: 0.12
+  guidance_strong_motion: 0.8
+  guidance_motion_memory_s: 0.6
+  cut_strip_fraction: 0.045
+  cut_contact_px: 2.0
+  cut_touch_px: 0
+  cut_min_depth_px: 3
+  cut_min_component_area: 5
+  cut_max_component_span: 0.15
+  cut_components_hard: 2
+  cut_ink_delta: 35
+  cut_contrast_soft: 25
+  cut_contrast_hard: 65
+  glare_ink_level: 150
+  glare_contrast_low: 8
+  glare_contrast_good: 30
+  glare_edges_low: 0.03
+  glare_edges_good: 0.16
+  glare_neighbor_ink_soft: 0.025
+  glare_neighbor_ink_hard: 0.12
+  boundary_samples: 48
+  boundary_offset_px: 4
+  color_transition: 22.0
+  normal_gradient: 18.0
+  edge_contact: 0.004
+  edge_near: 0.04
+  aspect_low_good: 1.30
+  aspect_low_bad: 1.10
+  aspect_high_good: 1.65
+  aspect_high_bad: 2.05
+  mrz_width_prior: 0.90
+  mrz_center_y_prior: 0.875
+  page_aspect_prior: 1.42
+  expected_outside_fraction: 0.055
+  side_block: 0.55
+  top_substantial: 0.16
+  top_ink_fraction: 0.035
+  mrz_width: 800
+  mrz_cells: 22
+  cell_candidate_soft: 0.12
+  cell_candidate_hard: 0.55
+  cell_clip_soft: 0.25
+  cell_clip_hard: 0.75
+  temporal_crops: 4
+  temporal_gap_s: 0.8
+  temporal_alignment_response: 0.35
+  temporal_shift_px: 8.0
+  guidance_min_s: 0.65
+  guidance_switch_margin: 0.20
+decision:
+  thresholds:
+    CROPPED: {enter: 0.55, exit: 0.35}
+
+motion:
+  normalization: page_relative
+  # Convert existing units using reference page diagonal 0.80 of frame.
+  center_deadzone: 0.0125
+  scale_deadzone: 0.024
+  speed_good: 0.125
+  speed_bad: 0.50

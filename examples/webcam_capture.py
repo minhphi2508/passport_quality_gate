@@ -33,10 +33,9 @@ def main():
     args = parser.parse_args()
     if args.analysis_fps <= 0:
         parser.error('--analysis-fps must be positive')
-    config = Path(__file__).resolve().parents[1] / 'configs/capture_viewport.yaml'
     viewport = CaptureViewport(*args.viewport)
     start = perf_counter()
-    gate = PassportQualityGate(device=args.device, config=config)
+    gate = PassportQualityGate(device=args.device, config="capture_viewport")
     print(json.dumps({'startup_ms': (perf_counter()-start)*1000, **gate.runtime_info()}))
     selector = BestFrameSelector()
     camera = cv2.VideoCapture(int(args.source) if args.source.isdigit() else args.source)

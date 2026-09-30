@@ -1,117 +1,50 @@
-# API Contract — SDK 0.1.3
+# API Contract — SDK 0.1.4
 
-## Input
+## Preferred production input
 
-Current Python reference input:
-
-```text
-numpy.uint8
-BGR
-H x W x 3
-```
-
-The engine does not require a fixed 1280×720 frame size.
-
-A UI guide is supplied in normalized:
-
-```text
-(x, y, width, height)
-```
-
-coordinates.
-
-## Main object
+`numpy.uint8`, BGR, `H x W x 3`, containing **only the product-visible capture ROI**. The SDK does not own screen coordinates or UI layout.
 
 ```python
-PassportQualityGate(
-    device="auto",
-    weights=None,
-    config=None,
-)
+gate = PassportQualityGate(config="capture_viewport", device="auto")
+preview = gate.analyze_roi_preview(roi_bgr, timestamp=t, viewport_metadata=metadata)
+final = gate.analyze_roi_final(selected_roi_bgr, timestamp=t_click, viewport_metadata=metadata)
 ```
 
-Main methods:
+`viewport_metadata` is optional diagnostic metadata. It does not change pixel content.
 
-- `analyze_preview(frame, guide_box, timestamp=None)` — full Golden preview result with integration diagnostics.
-- `analyze_final(frame, guide_box, timestamp=None)` — authoritative full-frame final result.
-- `analyze_document_crop(frame, timestamp=None)` — final analysis for an already-cropped passport data page.
-- `analyze_preview_public(...)`, `analyze_final_public(...)`, `analyze_document_crop_public(...)` — compact JSON-ready result.
-- `reset()` — reset both preview and final orchestration state for a new session/document.
-- `metadata` / `runtime_info()` — runtime/version/device metadata.
+## Full-camera convenience adapter
 
-Use one instance per live stream/session.
+`CaptureViewport` can crop an oriented camera frame before analysis:
 
-## Stable integration fields for SDK 0.1.x
+```python
+from passport_quality_gate import CaptureViewport
+viewport = CaptureViewport(0.16, 0.18, 0.68, 0.64)
+result = gate.analyze_capture_preview(frame_bgr, viewport, timestamp=t)
+```
 
-The compact public result exposes:
+The host is still responsible for mapping the actual UI rectangle through its preview transform.
 
-- `capture_allowed`
-- `capture_quality_state`
-- `workflow_state`
-- `guidance_code`
-- `recommended_adjustment`
-- `blocking_issues`
-- `advisories`
-- `timing_ms.total`
+## Public result
 
-Other diagnostics are not guaranteed as a long-term app/server contract.
-
-## Final result normalization in v0.1.3
-
-The frozen Golden Analyzer internally uses final `ACCEPT` / `RETAKE` states. SDK v0.1.3 normalizes final integration aliases at the wrapper boundary so that:
+Use `to_public_result(...)` or the `*_public` helpers when only the stable integration fields are needed:
 
 ```text
-ACCEPT → capture_allowed=True
-RETAKE → capture_allowed=False
+capture_allowed
+capture_quality_state
+workflow_state
+guidance_code
+recommended_adjustment
+blocking_issues
+advisories
+timing_ms.total
 ```
 
-This does not change the underlying frozen quality decision, quality scores, blockers, advisories, thresholds, or detector weights.
+Keep the full result when using `BestFrameSelector`, debug diagnostics or `extract_passport_page`.
 
-Final orchestration also uses separate analyzer state from live preview so a final call cannot unexpectedly reset preview temporal history.
+## Session lifecycle
 
-## Full result vs public result
+One gate + selector per capture session. Use monotonic timestamps. On new document, meaningful pause/resume or viewport change: `gate.reset()` and `selector.clear()`.
 
-Use the compact public result for UI/server decision integration.
+## Compatibility
 
-Use the **full result** when calling:
-
-- `BestFrameSelector.push(...)`
-- `extract_passport_page(...)`
-
-because these utilities require localization and/or quality diagnostics omitted from the compact public contract.
-
-## Best-frame selector
-
-```python
-selector.push(frame, full_preview_result, timestamp=t)
-best = selector.select_recent(trigger_timestamp=t_click)
-```
-
-Requirements:
-
-- timestamps must be finite
-- push timestamps must strictly increase within one session
-- `trigger_timestamp` must not precede the latest pushed timestamp
-- clear the selector for a new document/session
-
-The selector is RAM-only and bounded.
-
-## Passport-page extraction
-
-```python
-from passport_quality_gate.capture_output import extract_passport_page
-
-crop = extract_passport_page(selected_full_frame, full_final_result)
-```
-
-The function returns an in-memory perspective-corrected BGR `numpy.ndarray`.
-
-Call it only on the exact selected frame that passed final analysis.
-
-If extraction fails, the caller should explicitly handle that failure. The SDK does not silently substitute the full camera frame.
-
-## Guidance strings
-
-The SDK returns guidance **codes**, not user-facing localized text.
-
-UI copy and localization belong to the consuming application.
+Legacy `analyze_preview(frame, guide_box)` / `analyze_final(frame, guide_box)` remain available. They use the legacy full-frame/guide contract and are not the recommended V4 product integration.

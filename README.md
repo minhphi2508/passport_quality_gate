@@ -2,49 +2,17 @@
 
 Python reference SDK for pre-OCR passport capture quality assessment.
 
-The current capture-viewport candidate analyzes only the camera ROI that the host application exposes to the user. Pixels hidden outside the product capture viewport must not affect the model.
+**SDK candidate:** `0.1.4`
+**Capture policy:** `V4-CAPTURE-VIEWPORT`
 
-## Responsibilities
+The production contract is ROI-first: the host application maps its visible capture rectangle to camera pixels and sends only that effective capture ROI to the SDK. UI, camera lifecycle, preview rendering and localized user copy remain application responsibilities.
 
-The SDK owns:
-
-- YOLO passport-page and MRZ localization
-- physical completeness and positioning evidence
-- motion, blur, exposure, glare, contrast, noise, rotation and perspective checks
-- stage-aware capture guidance codes
-- temporal preview state
-- recent-best-frame selection
-- final ACCEPT / RETAKE validation
-- perspective-corrected passport-page extraction for OCR
-
-The host application owns:
-
-- camera lifecycle and preview rendering
-- the on-screen capture rectangle and grey outside-mask
-- UI-to-camera ROI mapping
-- orientation / mirroring integration
-- localized copy and product UX
-- storage, privacy, networking and downstream OCR invocation
-
-## Installation
-
-```bash
-py -3.12 -m venv .venv
-source .venv/Scripts/activate
-python -m pip install -e ".[dev]"
-```
-
-The reference runtime supports Python 3.11 and 3.12.
-
-## Capture-viewport usage
+## Quick start
 
 ```python
-from passport_quality_gate.api import PassportQualityGate
-from passport_quality_gate.frame_selector import BestFrameSelector
-from passport_quality_gate.capture_output import extract_passport_page
+from passport_quality_gate import PassportQualityGate, BestFrameSelector, extract_passport_page
 
-# The host app supplies only product-visible ROI pixels.
-gate = PassportQualityGate(config="configs/capture_viewport.yaml", device="auto")
+gate = PassportQualityGate(config="capture_viewport", device="auto")
 selector = BestFrameSelector()
 
 preview = gate.analyze_roi_preview(roi_bgr, timestamp=t, viewport_metadata=metadata)
@@ -59,48 +27,33 @@ if final["capture_allowed"]:
     passport_crop = extract_passport_page(chosen, final)
 ```
 
-For details, see [`docs/CAPTURE_VIEWPORT.md`](docs/CAPTURE_VIEWPORT.md) and [`docs/API_CONTRACT.md`](docs/API_CONTRACT.md).
+## SDK owns
 
-## Reference webcam harness
+- passport-page and MRZ localization
+- completeness/positioning evidence within the supplied ROI
+- motion, blur, exposure, glare, contrast, noise, rotation and perspective checks
+- stage-aware guidance codes
+- recent-best-frame selection
+- final ACCEPT/RETAKE validation
+- perspective-corrected passport crop for downstream OCR/VLM
 
-```bash
-python examples/webcam_capture.py --source 0 --device auto \
-  --viewport 0.16 0.18 0.68 0.64 \
-  --metrics outputs/capture_metrics.jsonl
-```
+## Host application owns
 
-The harness greys the area outside the viewport and submits only ROI pixels to the SDK.
+- camera lifecycle and preview
+- the visible capture rectangle and grey outside-mask
+- UI-to-camera coordinate mapping, orientation and mirroring
+- user-facing text/UX
+- storage/privacy/networking
+- downstream OCR/VLM invocation and retry policy
 
 ## Validation
 
 ```bash
+python tools/verify_release_core.py
 python -m pytest -q
 python -m compileall -q src examples tools tests
 ```
 
-The capture-quality policy is not an authenticity check and does not guarantee OCR correctness. Target-camera calibration and production-device performance validation remain required.
+Manual camera acceptance was completed on the accepted V4 candidate before this release-prep pass. `production_validated` remains `False`: broad device/population validation and OCR-linked calibration are still future work.
 
-## Repository layout
-
-```text
-passport_quality_gate/
-├── src/passport_quality_gate/
-│   ├── api.py
-│   ├── analyzer.py
-│   ├── capture_policy.py
-│   ├── capture_output.py
-│   ├── decision.py
-│   ├── frame_selector.py
-│   ├── geometry.py
-│   ├── localization.py
-│   ├── motion.py
-│   ├── quality.py
-│   ├── readability.py
-│   └── viewport.py
-├── configs/
-│   └── capture_viewport.yaml
-├── docs/
-├── examples/
-├── tests/
-└── tools/
-```
+See `docs/CAPTURE_VIEWPORT.md`, `docs/API_CONTRACT.md`, and `docs/DEVELOPER_HANDOFF.md`.

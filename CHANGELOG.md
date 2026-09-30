@@ -1,5 +1,21 @@
 # Changelog
 
+## v0.1.4
+### Added
+- Capture-viewport profile packaged with the wheel and available as `config="capture_viewport"`.
+- ROI-only preview/final APIs and viewport mapping helpers for host applications.
+- Stage-aware guidance, MRZ presence/completeness checks, page-relative motion evidence and local MRZ glare handling from the accepted V4 candidate.
+- Release-core fingerprint and wheel acceptance tooling.
+
+### Integration contract
+- The host application owns camera/UI/UX and must pass the exact product-visible capture ROI.
+- Pixels hidden outside that ROI are not part of model input and must not influence the decision.
+- Best-frame selection, final validation and OCR crop all operate on the same ROI pixel domain.
+
+### Compatibility
+- Legacy FP2 full-frame/guide APIs remain available for existing integrations.
+- The historical FP2 Golden manifest remains available in Git history/tags; it is not repurposed as the V4 release manifest.
+
 ## v0.1.3
 ### Added
 - Best-frame capture handoff now extracts the detected passport page for downstream OCR.
